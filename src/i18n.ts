@@ -116,7 +116,7 @@ export const STRINGS: Record<Lang, Strings> = {
     passcodeLabel: 'App passcode',
     passcodePlaceholder: 'Required for uploads and generation',
     passcodeNote:
-      'Kept only for this session and sent directly to the backend over HTTPS. Never stored.',
+      'Held only in this tab\'s memory until you reload or close it. Never written to browser storage or saved.',
     passcodeClear: 'Clear',
     passcodeRejected: 'Passcode missing or incorrect. Re-enter it above and try again.',
     generateSingle: 'Generate Lesson Plan',
@@ -228,7 +228,7 @@ export const STRINGS: Record<Lang, Strings> = {
     langToggle: 'English',
     passcodeLabel: 'رمز الدخول',
     passcodePlaceholder: 'مطلوب لرفع الملفات والتوليد',
-    passcodeNote: 'يُحفظ في هذه الجلسة فقط ويُرسل مباشرة إلى الخادم عبر اتصال آمن. لا يُخزَّن أبدًا.',
+    passcodeNote: 'يبقى في ذاكرة هذا التبويب فقط حتى إعادة التحميل أو الإغلاق، ويُرسل مباشرة إلى الخادم عبر اتصال آمن. لا يُكتب في مخزن المتصفح ولا يُحفَظ.',
     passcodeClear: 'مسح',
     passcodeRejected: 'رمز الدخول غير صحيح أو مفقود. أعد إدخاله أعلاه ثم حاول مجددًا.',
     generateSingle: 'توليد خطة الدرس',
