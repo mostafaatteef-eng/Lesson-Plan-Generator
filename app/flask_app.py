@@ -152,12 +152,16 @@ def require_passcode(fn):
 
 
 def require_ai(fn):
-    """AI endpoints never run without a real server-side key."""
+    """AI endpoints run ONLY when paid AI is explicitly authorized.
+
+    A saved key alone is not spend permission: both OPENAI_API_KEY and
+    ENABLE_AI_GENERATION=1 must be set server-side.
+    """
 
     @wraps(fn)
     def wrapper(*args, **kwargs):
-        if not os.getenv("OPENAI_API_KEY"):
-            return _err(503, "AI generation is not configured: no OPENAI_API_KEY is set on the server.")
+        if not (os.getenv("OPENAI_API_KEY") and os.getenv("ENABLE_AI_GENERATION") == "1"):
+            return _err(503, "Paid AI is not authorized/configured on this server.")
         return fn(*args, **kwargs)
 
     return wrapper
@@ -182,16 +186,45 @@ def _render_pdf(docx_bytes: bytes) -> "tuple[Optional[bytes], bool]":
 
 
 # Free-host resource bounds: reject oversized uploads and cap retained
-# in-memory items so a session cannot exhaust the 512MB disk / small RAM.
+# in-memory items and aggregate bytes so a session cannot exhaust the
+# 512MB disk / small RAM. Items expire after RETENTION_SECONDS (lazy sweep).
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 MAX_BATCH_LESSONS = 25
 MAX_STORE_ITEMS = 50
+MAX_STORE_BYTES = 200 * 1024 * 1024
+RETENTION_SECONDS = 6 * 3600
+
+_CURRICULUM_EXTS = (".pdf", ".docx", ".pptx", ".txt")
 
 
-def _store_put(store: Dict[str, Dict], key: str, value: Dict):
-    """Insert with a bound; returns an error response when the cap is hit."""
+def _allowed(filename: str, exts) -> bool:
+    return (filename or "").lower().endswith(exts)
+
+
+def _retained_bytes() -> int:
+    total = 0
+    for store in (UNITS, TEMPLATES, PLANS, BATCHES):
+        for value in store.values():
+            for v in value.values():
+                if isinstance(v, (bytes, bytearray)):
+                    total += len(v)
+    return total
+
+
+def _sweep_expired() -> None:
+    now = time.time()
+    for store in (UNITS, TEMPLATES, PLANS, BATCHES):
+        for key in [k for k, v in store.items() if now - v.get("ts", now) > RETENTION_SECONDS]:
+            del store[key]
+
+
+def _store_put(store: Dict[str, Dict], key: str, value: Dict, incoming_bytes: int = 0):
+    """Insert with count/byte bounds; error response when a cap is hit."""
     if key not in store and len(store) >= MAX_STORE_ITEMS:
         return _err(429, "Session storage limit reached; delete unused items and retry.")
+    if _retained_bytes() + incoming_bytes > MAX_STORE_BYTES:
+        return _err(429, "Session storage byte limit reached; delete unused items and retry.")
+    value["ts"] = time.time()
     store[key] = value
     return None
 
@@ -204,6 +237,10 @@ def _new_capability_id(prefix: str) -> str:
 def create_app() -> Flask:
     app = Flask(__name__)
     app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_BYTES
+
+    @app.before_request
+    def sweep():
+        _sweep_expired()
 
     @app.after_request
     def add_cors(resp):
@@ -260,6 +297,8 @@ def create_app() -> Flask:
         f = request.files.get("file")
         if f is None:
             return _err(400, "Missing curriculum file.")
+        if not _allowed(f.filename or "", _CURRICULUM_EXTS):
+            return _err(400, "Curriculum file must be PDF, DOCX, PPTX or TXT.")
         raw = f.read()
         try:
             unit = ingest_curriculum(raw, f.filename or "curriculum.txt")
@@ -267,7 +306,7 @@ def create_app() -> Flask:
             return _err(400, f"Could not parse curriculum file: {exc}")
         # Replace the engine's short id with a full-strength capability id.
         unit.unit_id = _new_capability_id("unit")
-        err = _store_put(UNITS, unit.unit_id, {"unit": unit, "bytes": raw})
+        err = _store_put(UNITS, unit.unit_id, {"unit": unit, "bytes": raw}, len(raw))
         if err:
             return err
         return jsonify(unit.model_dump())
@@ -317,7 +356,11 @@ def create_app() -> Flask:
         docx = request.files.get("docx")
         if docx is None:
             return _err(400, "Missing template DOCX file.")
+        if not _allowed(docx.filename or "", (".docx",)):
+            return _err(400, "Template file must be DOCX.")
         ref = request.files.get("reference_pdf")
+        if ref is not None and not _allowed(ref.filename or "", (".pdf",)):
+            return _err(400, "Reference file must be PDF.")
         docx_bytes = docx.read()
         ref_bytes = ref.read() if ref is not None else None
         try:
@@ -334,6 +377,7 @@ def create_app() -> Flask:
             TEMPLATES,
             schema.template_id,
             {"schema": schema, "docx_bytes": docx_bytes, "ref_pdf_bytes": ref_bytes},
+            len(docx_bytes) + len(ref_bytes or b""),
         )
         if err:
             return err
@@ -348,6 +392,8 @@ def create_app() -> Flask:
         f = request.files.get("file") or request.files.get("reference_pdf")
         if f is None:
             return _err(400, "Missing reference PDF file.")
+        if not _allowed(f.filename or "", (".pdf",)):
+            return _err(400, "Reference file must be PDF.")
         ref_bytes = f.read()
         try:
             import fitz
@@ -449,7 +495,8 @@ def create_app() -> Flask:
             "docx_bytes": out_docx,
             "pdf_bytes": out_pdf,
         }
-        if len(PLANS) > MAX_STORE_ITEMS:
+        PLANS[plan_id]["ts"] = time.time()
+        if len(PLANS) > MAX_STORE_ITEMS or _retained_bytes() > MAX_STORE_BYTES:
             del PLANS[plan_id]
             return None, _err(429, "Session storage limit reached; delete unused plans and retry.")
         return record, None
@@ -490,7 +537,12 @@ def create_app() -> Flask:
                     zf.writestr(rec["pdf_filename"], stored["pdf_bytes"])
 
         batch_id = _new_capability_id("batch")
-        err = _store_put(BATCHES, batch_id, {"filename": f"ATS-MU_Batch_{batch_id}.zip", "zip_bytes": zip_buf.getvalue()})
+        err = _store_put(
+            BATCHES,
+            batch_id,
+            {"filename": f"ATS-MU_Batch_{batch_id}.zip", "zip_bytes": zip_buf.getvalue()},
+            zip_buf.tell(),
+        )
         if err:
             return err
         return jsonify({"batch_id": batch_id, "plans": records})

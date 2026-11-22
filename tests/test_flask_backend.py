@@ -232,3 +232,53 @@ def test_store_cap(client, monkeypatch):
         headers=HEADERS,
     )
     assert r.status_code == 429
+
+
+def test_regenerate_blocked_with_key_but_ai_not_enabled(client, monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-dummy")
+    monkeypatch.delenv("ENABLE_AI_GENERATION", raising=False)
+
+    def _boom(*a, **k):
+        raise AssertionError("AI provider must never be called")
+
+    monkeypatch.setattr(fa, "regenerate_fields", _boom)
+    unit = _upload_unit(client)
+    tpl = _upload_template(client)
+    rec = client.post("/api/generate", json=_context(unit, tpl), headers=HEADERS).get_json()
+    r = client.post(
+        "/api/regenerate-fields",
+        json={"plan_id": rec["plan_id"], "field_keys": ["warm_up"]},
+        headers=HEADERS,
+    )
+    assert r.status_code == 503
+
+
+def test_upload_extension_allowlist(client):
+    r = client.post(
+        "/api/curriculum/upload",
+        data={"file": (io.BytesIO(b"MZ..."), "evil.exe")},
+        content_type="multipart/form-data",
+        headers=HEADERS,
+    )
+    assert r.status_code == 400
+
+
+def test_store_byte_cap(client, monkeypatch):
+    monkeypatch.setattr(fa, "MAX_STORE_BYTES", 100)
+    r = client.post(
+        "/api/curriculum/upload",
+        data={"file": (io.BytesIO(TXT), "unit.txt")},
+        content_type="multipart/form-data",
+        headers=HEADERS,
+    )
+    assert r.status_code == 429
+
+
+def test_expired_items_are_swept(client):
+    unit = _upload_unit(client)
+    fa.UNITS[unit["unit_id"]]["ts"] = 0  # force expiry
+    r = client.put(
+        f"/api/curriculum/{unit['unit_id']}/boundaries", json={"lessons": []}, headers=HEADERS
+    )
+    assert r.status_code == 404
+    assert unit["unit_id"] not in fa.UNITS
