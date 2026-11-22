@@ -6,6 +6,7 @@ import {defineConfig} from 'vite';
 
 export default defineConfig(() => {
   return {
+    base: '/Lesson-Plan-Generator/',
     plugins: [
       react(),
       tailwindcss(),
