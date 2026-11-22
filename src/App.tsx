@@ -12,6 +12,9 @@ import type {
   TemplateSchema,
 } from './types';
 
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '');
+const apiUrl = (path: string) => `${API_BASE_URL}${path}`;
+
 export default function App() {
   // Institutional defaults & optional official uploaded EBDA logo
   const [settings, setSettings] = useState<InstitutionSettings | null>(null);
@@ -55,7 +58,7 @@ export default function App() {
   // Load EBDA institutional settings on mount (includes official logo if configured)
   useEffect(() => {
     let active = true;
-    fetch('/api/settings')
+    fetch(apiUrl('/api/settings'))
       .then((res) => (res.ok ? res.json() : null))
       .then((data: InstitutionSettings | null) => {
         if (!active || !data) return;
@@ -82,7 +85,7 @@ export default function App() {
     try {
       const fd = new FormData();
       fd.append('file', file);
-      const res = await fetch('/api/curriculum/upload', { method: 'POST', body: fd });
+      const res = await fetch(apiUrl('/api/curriculum/upload'), { method: 'POST', body: fd });
       const data = await res.json();
       if (!res.ok) {
         throw new Error(data.error || 'Could not extract text from the uploaded curriculum.');
@@ -109,7 +112,7 @@ export default function App() {
     setBatchDownload(null);
     setGenerationError(null);
     if (existingId) {
-      fetch(`/api/curriculum/${existingId}`, { method: 'DELETE' }).catch(() => {});
+      fetch(apiUrl(`/api/curriculum/${existingId}`), { method: 'DELETE' }).catch(() => {});
     }
   };
 
@@ -123,7 +126,7 @@ export default function App() {
       if (stagedRefPdf) {
         fd.append('reference_pdf', stagedRefPdf);
       }
-      const res = await fetch('/api/template/upload', { method: 'POST', body: fd });
+      const res = await fetch(apiUrl('/api/template/upload'), { method: 'POST', body: fd });
       const data = await res.json();
       if (!res.ok) {
         throw new Error(data.error || 'Could not parse the uploaded Word template.');
@@ -154,7 +157,7 @@ export default function App() {
     setBatchDownload(null);
     setGenerationError(null);
     if (existingId) {
-      fetch(`/api/template/${existingId}`, { method: 'DELETE' }).catch(() => {});
+      fetch(apiUrl(`/api/template/${existingId}`), { method: 'DELETE' }).catch(() => {});
     }
   };
 
@@ -171,7 +174,7 @@ export default function App() {
     try {
       const fd = new FormData();
       fd.append('reference_pdf', file);
-      const res = await fetch(`/api/template/${template.template_id}/reference-pdf`, {
+      const res = await fetch(apiUrl(`/api/template/${template.template_id}/reference-pdf`), {
         method: 'POST',
         body: fd,
       });
@@ -195,7 +198,7 @@ export default function App() {
     setRefPdfSizeBytes(0);
     if (template?.has_reference_pdf) {
       try {
-        const res = await fetch(`/api/template/${template.template_id}/reference-pdf`, {
+        const res = await fetch(apiUrl(`/api/template/${template.template_id}/reference-pdf`), {
           method: 'DELETE',
         });
         if (res.ok) {
@@ -223,7 +226,7 @@ export default function App() {
         end_page: l.lesson_id === lessonId ? patch.end_page : l.end_page,
         approved: l.lesson_id === lessonId ? true : l.approved,
       }));
-      const res = await fetch(`/api/curriculum/${unit.unit_id}/boundaries`, {
+      const res = await fetch(apiUrl(`/api/curriculum/${unit.unit_id}/boundaries`), {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ lessons: nextLessons }),
@@ -292,7 +295,7 @@ export default function App() {
 
     try {
       if (selectedLessonIds.length > 1) {
-        const res = await fetch('/api/generate-batch', {
+        const res = await fetch(apiUrl('/api/generate-batch'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -309,7 +312,7 @@ export default function App() {
           data.batch_id ? { batchId: data.batch_id, filename: data.zip_filename } : null
         );
       } else {
-        const res = await fetch('/api/generate', {
+        const res = await fetch(apiUrl('/api/generate'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
