@@ -202,6 +202,12 @@ _MAX_ZIP_UNCOMPRESSED = 200 * 1024 * 1024
 _MAX_ZIP_RATIO = 100
 _MAX_XML_SCAN_BYTES = 8 * 1024 * 1024
 _MAX_PDF_PAGES = 300
+_MAX_PDF_PAGE_AREA_PT2 = 9_000_000  # ~3000x3000pt; bounds pixmap render memory
+_XML_MARKERS = (
+    [b"<!DOCTYPE", b"<!ENTITY"]
+    + [m.encode("utf-16-le") for m in ("<!DOCTYPE", "<!ENTITY")]
+    + [m.encode("utf-16-be") for m in ("<!DOCTYPE", "<!ENTITY")]
+)
 
 
 def _validate_upload(data: bytes, filename: str):
@@ -225,19 +231,22 @@ def _validate_upload(data: bytes, filename: str):
         if sum(i.file_size for i in infos) > _MAX_ZIP_UNCOMPRESSED:
             return "Archive expands beyond the allowed size."
         for i in infos:
-            if i.compress_size > 1024 * 1024 and i.file_size > i.compress_size * _MAX_ZIP_RATIO:
+            if i.file_size > max(1, i.compress_size) * _MAX_ZIP_RATIO:
                 return "Archive compression ratio is abnormal."
         for i in infos:
             if not i.filename.lower().endswith((".xml", ".rels")):
                 continue
+            if i.file_size > _MAX_XML_SCAN_BYTES:
+                return "An XML part exceeds the inspectable size limit."
             try:
                 with zipfile.ZipFile(io.BytesIO(data)) as zf:
                     with zf.open(i) as fh:
                         chunk = fh.read(_MAX_XML_SCAN_BYTES)
             except Exception:
                 return "Could not inspect archive contents safely."
-            if b"<!DOCTYPE" in chunk or b"<!ENTITY" in chunk:
-                return "XML parts with DOCTYPE/ENTITY declarations are not accepted."
+            for marker in _XML_MARKERS:
+                if marker in chunk:
+                    return "XML parts with DOCTYPE/ENTITY declarations are not accepted."
     elif name.endswith(".pdf"):
         try:
             import fitz
@@ -245,6 +254,10 @@ def _validate_upload(data: bytes, filename: str):
             with fitz.open(stream=data, filetype="pdf") as doc:
                 if doc.page_count > _MAX_PDF_PAGES:
                     return f"PDF exceeds the {_MAX_PDF_PAGES}-page limit."
+                for page in doc:
+                    r = page.rect
+                    if r.width * r.height > _MAX_PDF_PAGE_AREA_PT2:
+                        return "PDF page geometry exceeds the renderable limit."
         except Exception:
             return "Could not parse PDF file."
     return None
@@ -367,7 +380,9 @@ def create_app() -> Flask:
             return _err(400, f"Could not parse curriculum file: {exc}")
         # Replace the engine's short id with a full-strength capability id.
         unit.unit_id = _new_capability_id("unit")
-        err = _store_put(UNITS, unit.unit_id, {"unit": unit, "bytes": raw}, len(raw))
+        err = _store_put(
+            UNITS, unit.unit_id, {"unit": unit, "bytes": raw}, len(raw) + len(unit.model_dump_json())
+        )
         if err:
             return err
         return jsonify(unit.model_dump())
@@ -445,7 +460,7 @@ def create_app() -> Flask:
             TEMPLATES,
             schema.template_id,
             {"schema": schema, "docx_bytes": docx_bytes, "ref_pdf_bytes": ref_bytes},
-            len(docx_bytes) + len(ref_bytes or b""),
+            len(docx_bytes) + len(ref_bytes or b"") + len(schema.model_dump_json()),
         )
         if err:
             return err

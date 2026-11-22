@@ -387,3 +387,58 @@ def test_regenerate_respects_byte_cap(client, monkeypatch):
         headers=HEADERS,
     )
     assert r.status_code == 429
+
+
+def test_small_entry_ratio_rejected(client):
+    # Highly compressible small entry: ratio applies to every entry now.
+    bomb = _make_zip([("word/document.xml", b"0" * (2 * 1024 * 1024))])
+    r = client.post(
+        "/api/template/upload",
+        data={"docx": (io.BytesIO(bomb), "t.docx")},
+        content_type="multipart/form-data",
+        headers=HEADERS,
+    )
+    assert r.status_code == 400
+
+
+def test_utf16_entity_rejected(client):
+    xxe = _make_zip(
+        [("word/document.xml", ("<!DOCTYPE r [<!ENTITY x SYSTEM 'file:///etc/passwd'>]>").encode("utf-16-le"))]
+    )
+    r = client.post(
+        "/api/template/upload",
+        data={"docx": (io.BytesIO(xxe), "t.docx")},
+        content_type="multipart/form-data",
+        headers=HEADERS,
+    )
+    assert r.status_code == 400
+
+
+def test_oversized_xml_part_rejected(client):
+    big = _make_zip([("word/document.xml", b"<r>" + b" " * (9 * 1024 * 1024) + b"</r>")])
+    # 9MB of spaces compresses small but the uncompressed part exceeds scan cap
+    big_unbounded = _make_zip([("word/document.xml", b"A" * (9 * 1024 * 1024))])
+    for payload in (big, big_unbounded):
+        r = client.post(
+            "/api/template/upload",
+            data={"docx": (io.BytesIO(payload), "t.docx")},
+            content_type="multipart/form-data",
+            headers=HEADERS,
+        )
+        assert r.status_code == 400
+
+
+def test_pdf_page_geometry_bound(client):
+    import fitz
+
+    doc = fitz.open()
+    doc.new_page(width=4000, height=4000)
+    pdf = doc.tobytes()
+    doc.close()
+    r = client.post(
+        "/api/curriculum/upload",
+        data={"file": (io.BytesIO(pdf), "huge.pdf")},
+        content_type="multipart/form-data",
+        headers=HEADERS,
+    )
+    assert r.status_code == 400
