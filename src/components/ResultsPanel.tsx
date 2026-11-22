@@ -1,3 +1,4 @@
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '');
 import React from 'react';
 import {
   CheckCircle2,
@@ -160,7 +161,7 @@ export const ResultsPanel: React.FC<ResultsPanelProps> = ({ plans, batchDownload
         {/* Prominent Download Actions */}
         <div className="flex flex-col sm:flex-row flex-wrap items-stretch sm:items-center gap-3">
           <a
-            href={`/api/download/${primaryPlan.plan_id}/docx`}
+            href={`${API_BASE_URL}/api/download/${primaryPlan.plan_id}/docx`}
             className="inline-flex items-center justify-center gap-2 min-h-[44px] px-5 py-2.5 text-[14px] font-semibold rounded-[12px] bg-[#137A74] hover:bg-[#0F6661] text-white transition-colors whitespace-nowrap shrink-0"
           >
             <Download className="w-4 h-4" />
@@ -178,7 +179,7 @@ export const ResultsPanel: React.FC<ResultsPanelProps> = ({ plans, batchDownload
             </button>
           ) : (
             <a
-              href={`/api/download/${primaryPlan.plan_id}/pdf`}
+              href={`${API_BASE_URL}/api/download/${primaryPlan.plan_id}/pdf`}
               className="inline-flex items-center justify-center gap-2 min-h-[44px] px-5 py-2.5 text-[14px] font-semibold rounded-[12px] border border-[#CBC0A3] bg-white hover:bg-[#FFEAAF]/25 text-[#141716] transition-colors whitespace-nowrap shrink-0"
             >
               <FileText className="w-4 h-4 text-[#137A74]" />
@@ -188,7 +189,7 @@ export const ResultsPanel: React.FC<ResultsPanelProps> = ({ plans, batchDownload
 
           {isBatch && batchDownload && (
             <a
-              href={`/api/download/batch/${batchDownload.batchId}`}
+              href={`${API_BASE_URL}/api/download/batch/${batchDownload.batchId}`}
               className="inline-flex items-center justify-center gap-2 min-h-[44px] px-5 py-2.5 text-[14px] font-semibold rounded-[12px] border border-[#1CA29A]/40 bg-[#FFEAAF]/30 hover:bg-[#FFEAAF]/50 text-[#141716] transition-colors whitespace-nowrap shrink-0"
             >
               <Archive className="w-4 h-4 text-[#137A74]" />
@@ -211,14 +212,14 @@ export const ResultsPanel: React.FC<ResultsPanelProps> = ({ plans, batchDownload
                 </div>
                 <div className="flex items-center gap-3 shrink-0 text-[12.5px] font-medium">
                   <a
-                    href={`/api/download/${plan.plan_id}/docx`}
+                    href={`${API_BASE_URL}/api/download/${plan.plan_id}/docx`}
                     className="text-[#137A74] hover:underline whitespace-nowrap"
                   >
                     Word (.docx)
                   </a>
                   {plan.pdf_available !== false ? (
                     <a
-                      href={`/api/download/${plan.plan_id}/pdf`}
+                      href={`${API_BASE_URL}/api/download/${plan.plan_id}/pdf`}
                       className="text-[#525B58] hover:text-[#141716] hover:underline whitespace-nowrap"
                     >
                       PDF (.pdf)
