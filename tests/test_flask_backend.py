@@ -282,3 +282,108 @@ def test_expired_items_are_swept(client):
     )
     assert r.status_code == 404
     assert unit["unit_id"] not in fa.UNITS
+
+
+def _make_zip(entries) -> bytes:
+    import zipfile as zf_
+
+    buf = io.BytesIO()
+    with zf_.ZipFile(buf, "w", zf_.ZIP_DEFLATED) as z:
+        for name, data in entries:
+            z.writestr(name, data)
+    return buf.getvalue()
+
+
+def test_zip_bomb_rejected(client):
+    bomb = _make_zip([("word/document.xml", b"0" * (50 * 1024 * 1024))])
+    assert len(bomb) < 5 * 1024 * 1024  # compresses far below the ratio bound
+    r = client.post(
+        "/api/template/upload",
+        data={"docx": (io.BytesIO(bomb), "t.docx")},
+        content_type="multipart/form-data",
+        headers=HEADERS,
+    )
+    assert r.status_code == 400
+
+
+def test_xxe_entity_rejected(client):
+    xxe = _make_zip(
+        [("word/document.xml", b'<?xml version="1.0"?><!DOCTYPE r [<!ENTITY x SYSTEM "file:///etc/passwd">]><r/>')]
+    )
+    r = client.post(
+        "/api/template/upload",
+        data={"docx": (io.BytesIO(xxe), "t.docx")},
+        content_type="multipart/form-data",
+        headers=HEADERS,
+    )
+    assert r.status_code == 400
+
+
+def test_pdf_page_bound(client):
+    import fitz
+
+    doc = fitz.open()
+    for _ in range(301):
+        doc.new_page()
+    pdf = doc.tobytes()
+    doc.close()
+    r = client.post(
+        "/api/curriculum/upload",
+        data={"file": (io.BytesIO(pdf), "big.pdf")},
+        content_type="multipart/form-data",
+        headers=HEADERS,
+    )
+    assert r.status_code == 400
+
+
+def test_retained_bytes_counts_parsed_objects(client, monkeypatch):
+    unit = _upload_unit(client)
+    tpl = _upload_template(client)
+    before = fa._retained_bytes()
+    client.post("/api/generate", json=_context(unit, tpl), headers=HEADERS)
+    after = fa._retained_bytes()
+    # Plan record, payload object and generated blobs must all be accounted.
+    assert after - before > 1000
+
+
+def test_reference_pdf_replacement_respects_byte_cap(client, monkeypatch):
+    tpl = _upload_template(client)
+    import fitz
+
+    doc = fitz.open()
+    doc.new_page()
+    pdf = doc.tobytes()
+    doc.close()
+    monkeypatch.setattr(fa, "MAX_STORE_BYTES", fa._retained_bytes() + len(pdf) - 1)
+    r = client.post(
+        f"/api/template/{tpl['template_id']}/reference-pdf",
+        data={"file": (io.BytesIO(pdf), "ref.pdf")},
+        content_type="multipart/form-data",
+        headers=HEADERS,
+    )
+    assert r.status_code == 429
+
+
+def test_regenerate_respects_byte_cap(client, monkeypatch):
+    unit = _upload_unit(client)
+    tpl = _upload_template(client)
+    rec = client.post("/api/generate", json=_context(unit, tpl), headers=HEADERS).get_json()
+    # Now authorize AI and stub the provider so no paid call can happen.
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-dummy")
+    monkeypatch.setenv("ENABLE_AI_GENERATION", "1")
+
+    class _Payload:
+        def model_dump(self):
+            return {}
+
+    monkeypatch.setattr(fa, "regenerate_fields", lambda *a, **k: _Payload())
+    monkeypatch.setattr(fa, "inject_lesson_plan_xml_safe", lambda *a, **k: (b"x" * 2048, {}))
+    monkeypatch.setattr(fa, "_render_pdf", lambda b: (b"y" * 2048, True))
+    monkeypatch.setattr(fa, "run_four_pillar_qa", lambda **k: (_ for _ in ()).throw(RuntimeError("skip")))
+    monkeypatch.setattr(fa, "MAX_STORE_BYTES", 100)
+    r = client.post(
+        "/api/regenerate-fields",
+        json={"plan_id": rec["plan_id"], "field_keys": ["warm_up"]},
+        headers=HEADERS,
+    )
+    assert r.status_code == 429

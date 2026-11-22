@@ -196,18 +196,76 @@ RETENTION_SECONDS = 6 * 3600
 
 _CURRICULUM_EXTS = (".pdf", ".docx", ".pptx", ".txt")
 
+# Archive/resource validation bounds (pre-parse, guards decompression abuse).
+_MAX_ZIP_ENTRIES = 2000
+_MAX_ZIP_UNCOMPRESSED = 200 * 1024 * 1024
+_MAX_ZIP_RATIO = 100
+_MAX_XML_SCAN_BYTES = 8 * 1024 * 1024
+_MAX_PDF_PAGES = 300
+
+
+def _validate_upload(data: bytes, filename: str):
+    """Pre-parse resource checks. Returns an error string or None.
+
+    DOCX/PPTX are ZIP containers, so the extension allowlist alone cannot
+    stop decompression bombs: verify entry count, aggregate uncompressed
+    size and per-entry ratio before any parser sees the file, and reject
+    XML parts with DOCTYPE/ENTITY declarations (XXE surface). PDFs get a
+    page-count bound on top of the byte cap.
+    """
+    name = (filename or "").lower()
+    if name.endswith((".docx", ".pptx")):
+        try:
+            with zipfile.ZipFile(io.BytesIO(data)) as zf:
+                infos = zf.infolist()
+        except zipfile.BadZipFile:
+            return "File is not a valid DOCX/PPTX archive."
+        if len(infos) > _MAX_ZIP_ENTRIES:
+            return "Archive has too many entries."
+        if sum(i.file_size for i in infos) > _MAX_ZIP_UNCOMPRESSED:
+            return "Archive expands beyond the allowed size."
+        for i in infos:
+            if i.compress_size > 1024 * 1024 and i.file_size > i.compress_size * _MAX_ZIP_RATIO:
+                return "Archive compression ratio is abnormal."
+        for i in infos:
+            if not i.filename.lower().endswith((".xml", ".rels")):
+                continue
+            try:
+                with zipfile.ZipFile(io.BytesIO(data)) as zf:
+                    with zf.open(i) as fh:
+                        chunk = fh.read(_MAX_XML_SCAN_BYTES)
+            except Exception:
+                return "Could not inspect archive contents safely."
+            if b"<!DOCTYPE" in chunk or b"<!ENTITY" in chunk:
+                return "XML parts with DOCTYPE/ENTITY declarations are not accepted."
+    elif name.endswith(".pdf"):
+        try:
+            import fitz
+
+            with fitz.open(stream=data, filetype="pdf") as doc:
+                if doc.page_count > _MAX_PDF_PAGES:
+                    return f"PDF exceeds the {_MAX_PDF_PAGES}-page limit."
+        except Exception:
+            return "Could not parse PDF file."
+    return None
+
 
 def _allowed(filename: str, exts) -> bool:
     return (filename or "").lower().endswith(exts)
 
 
 def _retained_bytes() -> int:
+    """Approximate retained bytes: raw blobs plus serialized parsed objects."""
     total = 0
     for store in (UNITS, TEMPLATES, PLANS, BATCHES):
         for value in store.values():
             for v in value.values():
                 if isinstance(v, (bytes, bytearray)):
                     total += len(v)
+                elif hasattr(v, "model_dump_json"):
+                    total += len(v.model_dump_json())
+                elif isinstance(v, dict):
+                    total += len(str(v))
     return total
 
 
@@ -300,6 +358,9 @@ def create_app() -> Flask:
         if not _allowed(f.filename or "", _CURRICULUM_EXTS):
             return _err(400, "Curriculum file must be PDF, DOCX, PPTX or TXT.")
         raw = f.read()
+        bad = _validate_upload(raw, f.filename or "")
+        if bad:
+            return _err(400, bad)
         try:
             unit = ingest_curriculum(raw, f.filename or "curriculum.txt")
         except Exception as exc:
@@ -362,7 +423,14 @@ def create_app() -> Flask:
         if ref is not None and not _allowed(ref.filename or "", (".pdf",)):
             return _err(400, "Reference file must be PDF.")
         docx_bytes = docx.read()
+        bad = _validate_upload(docx_bytes, docx.filename or "")
+        if bad:
+            return _err(400, bad)
         ref_bytes = ref.read() if ref is not None else None
+        if ref_bytes is not None:
+            bad = _validate_upload(ref_bytes, ref.filename or "")
+            if bad:
+                return _err(400, bad)
         try:
             schema = extract_template_schema(
                 docx_bytes,
@@ -395,6 +463,9 @@ def create_app() -> Flask:
         if not _allowed(f.filename or "", (".pdf",)):
             return _err(400, "Reference file must be PDF.")
         ref_bytes = f.read()
+        bad = _validate_upload(ref_bytes, f.filename or "")
+        if bad:
+            return _err(400, bad)
         try:
             import fitz
 
@@ -402,7 +473,11 @@ def create_app() -> Flask:
                 pages = doc.page_count
         except Exception:
             return _err(400, "Could not parse reference PDF file.")
+        old_len = len(stored.get("ref_pdf_bytes") or b"")
+        if _retained_bytes() - old_len + len(ref_bytes) > MAX_STORE_BYTES:
+            return _err(429, "Session storage byte limit reached; delete unused items and retry.")
         stored["ref_pdf_bytes"] = ref_bytes
+        stored["ts"] = time.time()
         schema: TemplateSchema = stored["schema"]
         schema.has_reference_pdf = True
         schema.reference_pdf_filename = f.filename
@@ -445,6 +520,8 @@ def create_app() -> Flask:
             return None, _err(404, "Template not found.")
 
         schema: TemplateSchema = tpl_entry["schema"]
+        if _retained_bytes() > MAX_STORE_BYTES:
+            return None, _err(429, "Session storage byte limit reached; delete unused items and retry.")
         # Paid AI runs ONLY on explicit authorization: a saved key alone is not
         # spend permission. ENABLE_AI_GENERATION=1 must also be set server-side
         # after the user approves AI cost/scope. Default is the honest,
@@ -585,9 +662,13 @@ def create_app() -> Flask:
         except Exception as exc:
             stored["record"]["qa_report"] = None
             stored["record"]["qa_status"] = f"blocked: QA could not run ({exc})"
+        old_blob = len(stored["docx_bytes"] or b"") + len(stored["pdf_bytes"] or b"")
+        if _retained_bytes() - old_blob + len(out_docx) + len(out_pdf or b"") > MAX_STORE_BYTES:
+            return _err(429, "Session storage byte limit reached; delete unused items and retry.")
         stored["payload_obj"] = updated_payload
         stored["docx_bytes"] = out_docx
         stored["pdf_bytes"] = out_pdf
+        stored["ts"] = time.time()
         stored["record"]["payload"] = updated_payload.model_dump()
         stored["record"]["pdf_available"] = bool(out_pdf)
         stored["record"]["pdf_status"] = (
