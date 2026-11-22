@@ -1,4 +1,5 @@
 import React, { useRef, useState } from 'react';
+import type { Strings } from '../i18n';
 import {
   FileText,
   FileSpreadsheet,
@@ -20,7 +21,8 @@ export interface UploadedFileSummary {
 interface UploadCardProps {
   id: string;
   title: string;
-  requirementLabel: 'Required' | 'Optional';
+  required: boolean;
+  requirementLabel: string;
   accept: string;
   allowedExtensions: string[];
   formatHint: string;
@@ -32,6 +34,7 @@ interface UploadCardProps {
   onSelectFile: (file: File) => void;
   onRemoveFile: () => void;
   onValidationError: (message: string) => void;
+  t: Strings;
 }
 
 const MAX_FILE_BYTES = 35 * 1024 * 1024;
@@ -45,6 +48,7 @@ function formatFileSize(bytes: number): string {
 export const UploadCard: React.FC<UploadCardProps> = ({
   id,
   title,
+  required,
   requirementLabel,
   accept,
   allowedExtensions,
@@ -57,6 +61,7 @@ export const UploadCard: React.FC<UploadCardProps> = ({
   onSelectFile,
   onRemoveFile,
   onValidationError,
+  t,
 }) => {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [dragging, setDragging] = useState(false);
@@ -65,15 +70,15 @@ export const UploadCard: React.FC<UploadCardProps> = ({
     if (!candidate) return;
     const ext = (candidate.name.split('.').pop() || '').toLowerCase();
     if (!allowedExtensions.includes(ext)) {
-      onValidationError(`Unsupported file type ".${ext || 'unknown'}". Allowed: ${formatHint}.`);
+      onValidationError(t.errUnsupported(ext || 'unknown', formatHint));
       return;
     }
     if (candidate.size === 0) {
-      onValidationError('The selected file is empty. Please choose a valid document.');
+      onValidationError(t.errEmpty);
       return;
     }
     if (candidate.size > MAX_FILE_BYTES) {
-      onValidationError('File exceeds the 35 MB maximum upload limit.');
+      onValidationError(t.errTooBig);
       return;
     }
     onSelectFile(candidate);
@@ -148,7 +153,7 @@ export const UploadCard: React.FC<UploadCardProps> = ({
 
           <span
             className={`text-[12px] font-medium shrink-0 ${
-              requirementLabel === 'Required' ? 'text-[#137A74]' : 'text-[#6B726F]'
+              required ? 'text-[#137A74]' : 'text-[#6B726F]'
             }`}
           >
             {requirementLabel}
@@ -174,7 +179,7 @@ export const UploadCard: React.FC<UploadCardProps> = ({
         >
           <Upload className="w-4 h-4 mx-auto mb-2 text-[#137A74]" />
           <div className="text-[13px] font-medium text-[#141716]">
-            {uploading ? 'Analyzing document…' : 'Drop file or click to browse'}
+            {uploading ? t.analyzing : t.dropOrBrowse}
           </div>
           <div className="mt-1 text-[11.5px] text-[#6B726F] font-mono-tabular">
             {formatHint}
@@ -212,17 +217,17 @@ export const UploadCard: React.FC<UploadCardProps> = ({
               className="flex-1 inline-flex items-center justify-center gap-1.5 min-h-[36px] px-3 py-1.5 text-[12px] font-medium rounded-[9px] border border-[#E6E1D3] bg-white text-[#141716] hover:border-[#1CA29A] hover:text-[#137A74] transition-colors whitespace-nowrap shrink-0 disabled:opacity-50"
             >
               <RefreshCw className={`w-3.5 h-3.5 ${uploading ? 'animate-spin' : ''}`} />
-              Replace
+              {t.replace}
             </button>
             <button
               type="button"
               onClick={onRemoveFile}
               disabled={uploading}
               className="inline-flex items-center justify-center gap-1.5 min-h-[36px] px-3 py-1.5 text-[12px] font-medium rounded-[9px] border border-[#E6E1D3] bg-white text-[#525B58] hover:border-rose-300 hover:text-rose-700 transition-colors whitespace-nowrap shrink-0 disabled:opacity-50"
-              aria-label={`Remove ${title}`}
+              aria-label={t.removeAria(title)}
             >
               <Trash2 className="w-3.5 h-3.5" />
-              Remove
+              {t.remove}
             </button>
           </div>
         </div>

@@ -8,6 +8,7 @@ import {
   Edit2,
 } from 'lucide-react';
 import type { CurriculumUnit, LessonBoundary } from '../types';
+import type { Strings } from '../i18n';
 
 export interface AdvancedOptions {
   gradeLevel: string;
@@ -29,6 +30,7 @@ interface LessonSelectorProps {
   advanced: AdvancedOptions;
   onChangeAdvanced: (next: AdvancedOptions) => void;
   disabled?: boolean;
+  t: Strings;
 }
 
 export const LessonSelector: React.FC<LessonSelectorProps> = ({
@@ -41,6 +43,7 @@ export const LessonSelector: React.FC<LessonSelectorProps> = ({
   advanced,
   onChangeAdvanced,
   disabled = false,
+  t,
 }) => {
   const [editingLessonId, setEditingLessonId] = useState<string | null>(null);
   const [draftTitle, setDraftTitle] = useState('');
@@ -62,7 +65,7 @@ export const LessonSelector: React.FC<LessonSelectorProps> = ({
     const safeStart = Math.max(1, Math.min(unit.total_pages, Number(draftStart) || 1));
     const safeEnd = Math.max(safeStart, Math.min(unit.total_pages, Number(draftEnd) || safeStart));
     await onSaveBoundaryEdit(lessonId, {
-      title: draftTitle.trim() || 'Lesson',
+      title: draftTitle.trim() || t.defaultLessonTitle,
       start_page: safeStart,
       end_page: safeEnd,
     });
@@ -74,9 +77,9 @@ export const LessonSelector: React.FC<LessonSelectorProps> = ({
       {/* Compact Lesson Selector Header */}
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-wrap items-baseline gap-2">
-          <h2 className="text-[15px] font-semibold text-[#141716]">Select Lesson</h2>
+          <h2 className="text-[15px] font-semibold text-[#141716]">{t.selectLesson}</h2>
           <span className="text-[12.5px] text-[#525B58] font-mono-tabular">
-            {selectedLessonIds.length} of {unit.lessons.length} selected
+            {t.selectedCount(selectedLessonIds.length, unit.lessons.length)}
           </span>
         </div>
 
@@ -87,7 +90,7 @@ export const LessonSelector: React.FC<LessonSelectorProps> = ({
             onClick={onSelectAll}
             className="text-[12.5px] font-medium text-[#137A74] hover:text-[#0F6661] hover:underline disabled:opacity-50 whitespace-nowrap shrink-0"
           >
-            {allSelected ? 'Select first only' : `Select all (${unit.lessons.length})`}
+            {allSelected ? t.selectFirstOnly : t.selectAll(unit.lessons.length)}
           </button>
         )}
       </div>
@@ -127,14 +130,14 @@ export const LessonSelector: React.FC<LessonSelectorProps> = ({
                     </div>
                     <div className="text-[12px] text-[#525B58] font-mono-tabular flex flex-wrap items-center gap-x-2 gap-y-0.5">
                       <span>
-                        Pages {lesson.start_page}–{lesson.end_page}
+                        {t.pagesRange(lesson.start_page, lesson.end_page)}
                       </span>
                       <span aria-hidden="true">·</span>
-                      <span>{lesson.word_count} words</span>
+                      <span>{t.wordsCount(lesson.word_count)}</span>
                       {lesson.user_modified && (
                         <>
                           <span aria-hidden="true">·</span>
-                          <span className="text-[#137A74]">Adjusted</span>
+                          <span className="text-[#137A74]">{t.adjusted}</span>
                         </>
                       )}
                     </div>
@@ -143,7 +146,7 @@ export const LessonSelector: React.FC<LessonSelectorProps> = ({
                       <div className="pt-1 flex items-start gap-1.5 text-[12px] text-[#8A6100]">
                         <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5 text-[#B57F00]" />
                         <span>
-                          {lesson.ambiguity_reason || 'Boundary uncertain — confirm page range.'}
+                          {lesson.ambiguity_reason || t.boundaryUncertain}
                         </span>
                       </div>
                     )}
@@ -163,7 +166,7 @@ export const LessonSelector: React.FC<LessonSelectorProps> = ({
                     }`}
                   >
                     <Edit2 className="w-3 h-3" />
-                    {uncertain ? 'Fix range' : 'Edit'}
+                    {uncertain ? t.fixRange : t.edit}
                   </button>
                 )}
               </div>
@@ -174,7 +177,7 @@ export const LessonSelector: React.FC<LessonSelectorProps> = ({
                   <div className="grid grid-cols-1 sm:grid-cols-12 gap-2.5">
                     <div className="sm:col-span-6">
                       <label className="block text-[11.5px] font-medium text-[#525B58] mb-1">
-                        Lesson title
+                        {t.lessonTitleLabel}
                       </label>
                       <input
                         type="text"
@@ -187,7 +190,7 @@ export const LessonSelector: React.FC<LessonSelectorProps> = ({
                     <div className="grid grid-cols-2 gap-2.5 sm:col-span-6">
                       <div>
                         <label className="block text-[11.5px] font-medium text-[#525B58] mb-1">
-                          Start page (1–{unit.total_pages})
+                          {t.startPage(unit.total_pages)}
                         </label>
                         <input
                           type="number"
@@ -200,7 +203,7 @@ export const LessonSelector: React.FC<LessonSelectorProps> = ({
                       </div>
                       <div>
                         <label className="block text-[11.5px] font-medium text-[#525B58] mb-1">
-                          End page (1–{unit.total_pages})
+                          {t.endPage(unit.total_pages)}
                         </label>
                         <input
                           type="number"
@@ -219,7 +222,7 @@ export const LessonSelector: React.FC<LessonSelectorProps> = ({
                       onClick={() => setEditingLessonId(null)}
                       className="min-h-[34px] px-3 py-1.5 text-[12px] font-medium rounded-[8px] border border-[#E6E1D3] bg-white text-[#525B58] hover:text-[#141716]"
                     >
-                      Cancel
+                      {t.cancel}
                     </button>
                     <button
                       type="button"
@@ -228,7 +231,7 @@ export const LessonSelector: React.FC<LessonSelectorProps> = ({
                       className="inline-flex items-center gap-1.5 min-h-[34px] px-3.5 py-1.5 text-[12px] font-semibold rounded-[8px] bg-[#137A74] hover:bg-[#0F6661] text-white disabled:opacity-50"
                     >
                       <Check className="w-3.5 h-3.5" />
-                      {savingBoundary ? 'Saving…' : 'Confirm range'}
+                      {savingBoundary ? t.saving : t.confirmRange}
                     </button>
                   </div>
                 </div>
@@ -249,14 +252,14 @@ export const LessonSelector: React.FC<LessonSelectorProps> = ({
         >
           <span className="inline-flex items-center gap-2">
             <SlidersHorizontal className="w-3.5 h-3.5 text-[#137A74]" />
-            <span>Advanced settings</span>
+            <span>{t.advancedSettings}</span>
             <span className="text-[12px] text-[#6B726F] font-normal">
-              · {advanced.durationMinutes} min ·{' '}
+              · {t.minutesShort(advanced.durationMinutes)} ·{' '}
               {advanced.outputLanguage === 'auto'
-                ? 'Auto language'
+                ? t.autoLanguage
                 : advanced.outputLanguage === 'ar'
-                  ? 'Arabic'
-                  : 'English'}
+                  ? t.arabic
+                  : t.english}
             </span>
           </span>
           {advancedOpen ? (
@@ -273,7 +276,7 @@ export const LessonSelector: React.FC<LessonSelectorProps> = ({
                 htmlFor="ebda-grade"
                 className="block text-[12px] font-medium text-[#525B58] mb-1"
               >
-                Grade
+                {t.grade}
               </label>
               <input
                 id="ebda-grade"
@@ -292,7 +295,7 @@ export const LessonSelector: React.FC<LessonSelectorProps> = ({
                 htmlFor="ebda-subject"
                 className="block text-[12px] font-medium text-[#525B58] mb-1"
               >
-                Subject
+                {t.subject}
               </label>
               <input
                 id="ebda-subject"
@@ -311,7 +314,7 @@ export const LessonSelector: React.FC<LessonSelectorProps> = ({
                 htmlFor="ebda-duration"
                 className="block text-[12px] font-medium text-[#525B58] mb-1"
               >
-                Lesson duration (minutes)
+                {t.durationLabel}
               </label>
               <input
                 id="ebda-duration"
@@ -334,7 +337,7 @@ export const LessonSelector: React.FC<LessonSelectorProps> = ({
                 htmlFor="ebda-language"
                 className="block text-[12px] font-medium text-[#525B58] mb-1"
               >
-                Output language
+                {t.outputLanguage}
               </label>
               <select
                 id="ebda-language"
@@ -347,9 +350,9 @@ export const LessonSelector: React.FC<LessonSelectorProps> = ({
                 }
                 className="w-full min-h-[40px] rounded-[10px] border border-[#E6E1D3] bg-white px-3 py-2 text-[13px] text-[#141716]"
               >
-                <option value="auto">Match template language</option>
-                <option value="ar">Arabic (العربية)</option>
-                <option value="en">English</option>
+                <option value="auto">{t.matchTemplateLang}</option>
+                <option value="ar">{t.arabic} (العربية)</option>
+                <option value="en">{t.english}</option>
               </select>
             </div>
           </div>

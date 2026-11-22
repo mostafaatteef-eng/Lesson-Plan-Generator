@@ -9,35 +9,37 @@ import {
   Archive,
 } from 'lucide-react';
 import type { GeneratedPlanRecord } from '../types';
+import type { Strings } from '../i18n';
 
 interface ResultsPanelProps {
   plans: GeneratedPlanRecord[];
   batchDownload: { batchId: string; filename: string } | null;
+  t: Strings;
 }
 
-function getQaStatus(status: 'pass' | 'warning' | 'fail') {
+function getQaStatus(status: 'pass' | 'warning' | 'fail', t: Strings) {
   if (status === 'pass') {
     return {
-      label: 'Passed',
+      label: t.qaPass,
       textClass: 'text-[#137A74]',
       icon: <CheckCircle2 className="w-4 h-4 text-[#1CA29A] shrink-0" />,
     };
   }
   if (status === 'warning') {
     return {
-      label: 'Needs Review',
+      label: t.qaWarning,
       textClass: 'text-[#8A6100]',
       icon: <AlertTriangle className="w-4 h-4 text-[#C28A00] shrink-0" />,
     };
   }
   return {
-    label: 'Failed',
+    label: t.qaFail,
     textClass: 'text-rose-700',
     icon: <XCircle className="w-4 h-4 text-rose-600 shrink-0" />,
   };
 }
 
-function collectFormattingWarnings(plans: GeneratedPlanRecord[]): string[] {
+function collectFormattingWarnings(plans: GeneratedPlanRecord[], t: Strings): string[] {
   const warnings: string[] = [];
   const seen = new Set<string>();
 
@@ -50,26 +52,19 @@ function collectFormattingWarnings(plans: GeneratedPlanRecord[]): string[] {
 
   for (const plan of plans) {
     if (plan.pdf_available === false) {
-      pushUnique(
-        plan.pdf_error ||
-          'PDF conversion failed; the editable Word (.docx) file remains available for download.'
-      );
+      pushUnique(plan.pdf_error || t.warnPdfFailed);
     } else if (!plan.qa_report.libreoffice_used) {
-      pushUnique(
-        'PDF generated with the built-in fallback renderer because LibreOffice is unavailable in this environment. Open the Word (.docx) file for full Arabic RTL typography and original template styling.'
-      );
+      pushUnique(t.warnPdfFallback);
     }
 
     if (plan.qa_report.page_count_rendered !== plan.qa_report.page_count_expected) {
       pushUnique(
-        `Rendered page count (${plan.qa_report.page_count_rendered}) differs from template baseline (${plan.qa_report.page_count_expected}).`
+        t.warnPageCount(plan.qa_report.page_count_rendered, plan.qa_report.page_count_expected)
       );
     }
 
     if (plan.qa_report.overflow_fields.length > 0) {
-      pushUnique(
-        `Potential cell overflow in: ${plan.qa_report.overflow_fields.slice(0, 3).join(', ')}.`
-      );
+      pushUnique(t.warnOverflow(plan.qa_report.overflow_fields.slice(0, 3).join(', ')));
     }
 
     for (const gate of plan.qa_report.approval_gates) {
@@ -82,7 +77,7 @@ function collectFormattingWarnings(plans: GeneratedPlanRecord[]): string[] {
   return warnings;
 }
 
-export const ResultsPanel: React.FC<ResultsPanelProps> = ({ plans, batchDownload }) => {
+export const ResultsPanel: React.FC<ResultsPanelProps> = ({ plans, batchDownload, t }) => {
   if (plans.length === 0) return null;
 
   const primaryPlan = plans[0];
@@ -96,8 +91,8 @@ export const ResultsPanel: React.FC<ResultsPanelProps> = ({ plans, batchDownload
       ? 'warning'
       : 'pass';
 
-  const statusMeta = getQaStatus(aggregateStatus);
-  const warnings = collectFormattingWarnings(plans);
+  const statusMeta = getQaStatus(aggregateStatus, t);
+  const warnings = collectFormattingWarnings(plans, t);
 
   return (
     <section
@@ -120,7 +115,7 @@ export const ResultsPanel: React.FC<ResultsPanelProps> = ({ plans, batchDownload
                 id="results-heading"
                 className="text-[16px] font-semibold text-[#141716]"
               >
-                Your Lesson Plan Is Ready
+                {t.planReady}
               </h2>
             </div>
 
@@ -129,32 +124,34 @@ export const ResultsPanel: React.FC<ResultsPanelProps> = ({ plans, batchDownload
               className="text-[15px] font-medium text-[#141716] font-arabic leading-snug"
             >
               {isBatch
-                ? `${primaryPlan.lesson_title} (+${plans.length - 1} more)`
+                ? `${primaryPlan.lesson_title} ${t.morePlans(plans.length - 1)}`
                 : primaryPlan.lesson_title}
             </div>
 
             <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[12.5px] text-[#525B58] font-mono-tabular">
               <span>
-                {plans.length === 1
-                  ? '1 lesson generated'
-                  : `${plans.length} lessons generated`}
+                {t.lessonsGenerated(plans.length)}
               </span>
               <span aria-hidden="true">·</span>
               <span>
-                {primaryPlan.qa_report.time_sum_minutes}/
-                {primaryPlan.qa_report.target_duration_minutes} min
+                {t.minutesValue(
+                  primaryPlan.qa_report.time_sum_minutes,
+                  primaryPlan.qa_report.target_duration_minutes
+                )}
               </span>
               <span aria-hidden="true">·</span>
               <span>
-                {primaryPlan.qa_report.page_count_rendered}/
-                {primaryPlan.qa_report.page_count_expected} pages
+                {t.pagesValue(
+                  primaryPlan.qa_report.page_count_rendered,
+                  primaryPlan.qa_report.page_count_expected
+                )}
               </span>
             </div>
           </div>
 
           <div className="flex items-center gap-1.5 text-[13px] font-semibold shrink-0">
             {statusMeta.icon}
-            <span className={statusMeta.textClass}>Quality: {statusMeta.label}</span>
+            <span className={statusMeta.textClass}>{t.qualityLabel} {statusMeta.label}</span>
           </div>
         </div>
 
@@ -165,7 +162,7 @@ export const ResultsPanel: React.FC<ResultsPanelProps> = ({ plans, batchDownload
             className="inline-flex items-center justify-center gap-2 min-h-[44px] px-5 py-2.5 text-[14px] font-semibold rounded-[12px] bg-[#137A74] hover:bg-[#0F6661] text-white transition-colors whitespace-nowrap shrink-0"
           >
             <Download className="w-4 h-4" />
-            Download Word (.docx)
+            {t.downloadDocx}
           </a>
 
           {primaryPlan.pdf_available === false ? (
@@ -175,7 +172,7 @@ export const ResultsPanel: React.FC<ResultsPanelProps> = ({ plans, batchDownload
               className="inline-flex items-center justify-center gap-2 min-h-[44px] px-5 py-2.5 text-[14px] font-medium rounded-[12px] border border-rose-200 bg-rose-50 text-rose-700 cursor-not-allowed whitespace-nowrap shrink-0"
             >
               <XCircle className="w-4 h-4" />
-              PDF Unavailable
+              {t.pdfUnavailable}
             </button>
           ) : (
             <a
@@ -183,7 +180,7 @@ export const ResultsPanel: React.FC<ResultsPanelProps> = ({ plans, batchDownload
               className="inline-flex items-center justify-center gap-2 min-h-[44px] px-5 py-2.5 text-[14px] font-semibold rounded-[12px] border border-[#CBC0A3] bg-white hover:bg-[#FFEAAF]/25 text-[#141716] transition-colors whitespace-nowrap shrink-0"
             >
               <FileText className="w-4 h-4 text-[#137A74]" />
-              Download PDF (.pdf)
+              {t.downloadPdf}
             </a>
           )}
 
@@ -193,7 +190,7 @@ export const ResultsPanel: React.FC<ResultsPanelProps> = ({ plans, batchDownload
               className="inline-flex items-center justify-center gap-2 min-h-[44px] px-5 py-2.5 text-[14px] font-semibold rounded-[12px] border border-[#1CA29A]/40 bg-[#FFEAAF]/30 hover:bg-[#FFEAAF]/50 text-[#141716] transition-colors whitespace-nowrap shrink-0"
             >
               <Archive className="w-4 h-4 text-[#137A74]" />
-              Download All (.zip)
+              {t.downloadAllZip}
             </a>
           )}
         </div>
@@ -215,17 +212,17 @@ export const ResultsPanel: React.FC<ResultsPanelProps> = ({ plans, batchDownload
                     href={`${API_BASE_URL}/api/download/${plan.plan_id}/docx`}
                     className="text-[#137A74] hover:underline whitespace-nowrap"
                   >
-                    Word (.docx)
+                    {t.wordLink}
                   </a>
                   {plan.pdf_available !== false ? (
                     <a
                       href={`${API_BASE_URL}/api/download/${plan.plan_id}/pdf`}
                       className="text-[#525B58] hover:text-[#141716] hover:underline whitespace-nowrap"
                     >
-                      PDF (.pdf)
+                      {t.pdfLink}
                     </a>
                   ) : (
-                    <span className="text-rose-700 whitespace-nowrap">PDF failed</span>
+                    <span className="text-rose-700 whitespace-nowrap">{t.pdfFailed}</span>
                   )}
                 </div>
               </div>
@@ -238,7 +235,7 @@ export const ResultsPanel: React.FC<ResultsPanelProps> = ({ plans, batchDownload
           <div className="rounded-[12px] bg-[#FFEAAF]/25 border border-[#CBC0A3]/60 px-4 py-3 space-y-1.5">
             <div className="flex items-center gap-1.5 text-[12.5px] font-semibold text-[#6E4D00]">
               <AlertTriangle className="w-3.5 h-3.5 text-[#B57F00] shrink-0" />
-              <span>Formatting & Validation Notes</span>
+              <span>{t.notesTitle}</span>
             </div>
             <ul className="space-y-1 text-[12.5px] text-[#525B58] leading-relaxed">
               {warnings.map((w, idx) => (

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { ArrowRight, Lock } from 'lucide-react';
+import { ArrowRight, Lock, Languages } from 'lucide-react';
 import { UploadCard, type UploadedFileSummary } from './components/UploadCard';
 import { LessonSelector, type AdvancedOptions } from './components/LessonSelector';
 import { GenerationProgress } from './components/GenerationProgress';
@@ -11,6 +11,7 @@ import type {
   InstitutionSettings,
   TemplateSchema,
 } from './types';
+import { STRINGS, type Lang } from './i18n';
 
 // Backend origin: build-time VITE_API_BASE_URL wins; otherwise default to the
 // deployed PythonAnywhere backend. No secrets here - the passcode is entered
@@ -62,10 +63,26 @@ export default function App() {
   // never part of the build. Sent as X-App-Passcode on mutating requests.
   const [passcode, setPasscode] = useState('');
 
+  // Interface language: Arabic-first (teachers are the primary audience),
+  // English toggle in the header. Document content direction stays dir="auto".
+  const [lang, setLang] = useState<Lang>('ar');
+  const t = STRINGS[lang];
+
+  useEffect(() => {
+    document.documentElement.lang = lang;
+    document.documentElement.dir = lang === 'ar' ? 'rtl' : 'ltr';
+  }, [lang]);
+
   const authHeaders = (extra?: Record<string, string>): Record<string, string> => {
     const headers: Record<string, string> = { ...(extra || {}) };
     if (passcode) headers['X-App-Passcode'] = passcode;
     return headers;
+  };
+
+  // Network failures surface as a clear translated message, not a raw TypeError.
+  const netMessage = (err: unknown, fallback: string): string => {
+    if (err instanceof TypeError) return t.errNetwork;
+    return err instanceof Error ? err.message : fallback;
   };
 
   // Honest server error surfacing. A 401 means the passcode was rejected:
@@ -75,7 +92,7 @@ export default function App() {
     const serverMessage = body?.error || body?.detail || '';
     if (status === 401) {
       setPasscode('');
-      return 'Passcode missing or incorrect. Re-enter it above and try again.';
+      return STRINGS[lang].passcodeRejected;
     }
     return serverMessage || fallback;
   };
@@ -117,9 +134,7 @@ export default function App() {
       });
       const data = await res.json();
       if (!res.ok) {
-        throw new Error(
-          explainHttpError(res.status, data, 'Could not extract text from the uploaded curriculum.')
-        );
+        throw new Error(explainHttpError(res.status, data, t.errCurriculumUpload));
       }
       const parsedUnit = data as CurriculumUnit;
       setUnit(parsedUnit);
@@ -128,7 +143,7 @@ export default function App() {
       setBatchDownload(null);
       setGenerationError(null);
     } catch (err) {
-      setCurriculumError(err instanceof Error ? err.message : 'Curriculum upload failed.');
+      setCurriculumError(netMessage(err, t.errCurriculumUpload));
     } finally {
       setUploadingCurriculum(false);
     }
@@ -145,9 +160,7 @@ export default function App() {
       // 404 means the server already forgot it, which is the goal state.
       if (!res.ok && res.status !== 404) {
         const data = await res.json().catch(() => null);
-        throw new Error(
-          explainHttpError(res.status, data, 'Could not remove the curriculum on the server.')
-        );
+        throw new Error(explainHttpError(res.status, data, t.errCurriculumRemove));
       }
       setUnit(null);
       setSelectedLessonIds([]);
@@ -156,7 +169,7 @@ export default function App() {
       setGenerationError(null);
     } catch (err) {
       // State preserved on failure so nothing appears removed when it is not.
-      setCurriculumError(err instanceof Error ? err.message : 'Curriculum removal failed.');
+      setCurriculumError(netMessage(err, t.errCurriculumRemove));
     }
   };
 
@@ -177,9 +190,7 @@ export default function App() {
       });
       const data = await res.json();
       if (!res.ok) {
-        throw new Error(
-          explainHttpError(res.status, data, 'Could not parse the uploaded Word template.')
-        );
+        throw new Error(explainHttpError(res.status, data, t.errTemplateUpload));
       }
       const parsedTemplate = data as TemplateSchema;
       setTemplate(parsedTemplate);
@@ -192,7 +203,7 @@ export default function App() {
       setBatchDownload(null);
       setGenerationError(null);
     } catch (err) {
-      setTemplateError(err instanceof Error ? err.message : 'Template upload failed.');
+      setTemplateError(netMessage(err, t.errTemplateUpload));
     } finally {
       setUploadingTemplate(false);
     }
@@ -208,9 +219,7 @@ export default function App() {
       });
       if (!res.ok && res.status !== 404) {
         const data = await res.json().catch(() => null);
-        throw new Error(
-          explainHttpError(res.status, data, 'Could not remove the template on the server.')
-        );
+        throw new Error(explainHttpError(res.status, data, t.errTemplateRemove));
       }
       setTemplate(null);
       setTemplateSizeBytes(0);
@@ -218,7 +227,7 @@ export default function App() {
       setBatchDownload(null);
       setGenerationError(null);
     } catch (err) {
-      setTemplateError(err instanceof Error ? err.message : 'Template removal failed.');
+      setTemplateError(netMessage(err, t.errTemplateRemove));
     }
   };
 
@@ -242,13 +251,13 @@ export default function App() {
       });
       const data = await res.json();
       if (!res.ok) {
-        throw new Error(explainHttpError(res.status, data, 'Could not attach Reference PDF.'));
+        throw new Error(explainHttpError(res.status, data, t.errRefPdfUpload));
       }
       setTemplate(data as TemplateSchema);
       setRefPdfSizeBytes(file.size);
       setStagedRefPdf(null);
     } catch (err) {
-      setRefPdfError(err instanceof Error ? err.message : 'Reference PDF upload failed.');
+      setRefPdfError(netMessage(err, t.errRefPdfUpload));
     } finally {
       setUploadingRefPdf(false);
     }
@@ -269,9 +278,7 @@ export default function App() {
       });
       if (!res.ok && res.status !== 404) {
         const data = await res.json().catch(() => null);
-        throw new Error(
-          explainHttpError(res.status, data, 'Could not remove the Reference PDF on the server.')
-        );
+        throw new Error(explainHttpError(res.status, data, t.errRefPdfRemove));
       }
       setStagedRefPdf(null);
       setRefPdfSizeBytes(0);
@@ -280,7 +287,7 @@ export default function App() {
         setTemplate(updated);
       }
     } catch (err) {
-      setRefPdfError(err instanceof Error ? err.message : 'Reference PDF removal failed.');
+      setRefPdfError(netMessage(err, t.errRefPdfRemove));
     }
   };
 
@@ -306,11 +313,11 @@ export default function App() {
       });
       const data = await res.json();
       if (!res.ok) {
-        throw new Error(explainHttpError(res.status, data, 'Failed to update lesson range.'));
+        throw new Error(explainHttpError(res.status, data, t.errBoundary));
       }
       setUnit(data as CurriculumUnit);
     } catch (err) {
-      setCurriculumError(err instanceof Error ? err.message : 'Could not save lesson boundary.');
+      setCurriculumError(netMessage(err, t.errBoundary));
     } finally {
       setSavingBoundary(false);
     }
@@ -378,9 +385,7 @@ export default function App() {
         });
         const data = await res.json();
         if (!res.ok) {
-          throw new Error(
-            explainHttpError(res.status, data, 'Batch lesson plan generation failed.')
-          );
+          throw new Error(explainHttpError(res.status, data, t.errGenerateBatch));
         }
         setGeneratedPlans(Array.isArray(data.plans) ? data.plans : []);
         setBatchDownload(
@@ -397,15 +402,13 @@ export default function App() {
         });
         const data = await res.json();
         if (!res.ok) {
-          throw new Error(explainHttpError(res.status, data, 'Lesson plan generation failed.'));
+          throw new Error(explainHttpError(res.status, data, t.errGenerate));
         }
         setGeneratedPlans([data as GeneratedPlanRecord]);
         setBatchDownload(null);
       }
     } catch (err) {
-      setGenerationError(
-        err instanceof Error ? err.message : 'An unexpected error occurred during generation.'
-      );
+      setGenerationError(netMessage(err, t.errUnexpected));
     } finally {
       window.clearInterval(stageTimer);
       setIsGenerating(false);
@@ -417,7 +420,7 @@ export default function App() {
     ? {
         name: unit.filename,
         sizeBytes: unit.file_size_bytes,
-        metaLine: `${unit.lessons.length} ${unit.lessons.length === 1 ? 'lesson' : 'lessons'} · ${unit.total_pages}p`,
+        metaLine: `${t.metaLessons(unit.lessons.length)} · ${t.metaPages(unit.total_pages)}`,
       }
     : null;
 
@@ -425,7 +428,7 @@ export default function App() {
     ? {
         name: template.filename,
         sizeBytes: templateSizeBytes,
-        metaLine: `${template.page_count_expected}p · ${template.is_rtl ? 'RTL' : 'LTR'}`,
+        metaLine: `${t.metaPages(template.page_count_expected)} · ${template.is_rtl ? t.rtlLabel : t.ltrLabel}`,
       }
     : null;
 
@@ -433,13 +436,13 @@ export default function App() {
     ? {
         name: template.reference_pdf_filename || 'Reference.pdf',
         sizeBytes: refPdfSizeBytes,
-        metaLine: template.reference_pdf_pages ? `${template.reference_pdf_pages}p baseline` : 'Attached',
+        metaLine: template.reference_pdf_pages ? t.metaBaseline(template.reference_pdf_pages) : t.metaAttached,
       }
     : stagedRefPdf
       ? {
           name: stagedRefPdf.name,
           sizeBytes: stagedRefPdf.size,
-          metaLine: 'Ready to compare',
+          metaLine: t.metaReadyToCompare,
         }
       : null;
 
@@ -453,17 +456,17 @@ export default function App() {
     !isGenerating;
 
   const readinessHint = !unit && !template
-    ? 'Upload a curriculum file and a Word template to continue.'
+    ? t.readinessBoth
     : !unit
-      ? 'Upload a curriculum file to detect lessons.'
+      ? t.readinessCurriculum
       : !template
-        ? 'Upload a Word (.docx) lesson plan template to enable generation.'
+        ? t.readinessTemplate
         : selectedLessonIds.length === 0
-          ? 'Select at least one lesson to generate.'
+          ? t.readinessLessons
           : null;
 
   return (
-    <div className="min-h-screen bg-[#FAF9F5] text-[#141716]">
+    <div className={`min-h-screen bg-[#FAF9F5] text-[#141716] ${lang === 'ar' ? 'font-arabic' : ''}`}>
       <div className="max-w-[900px] mx-auto px-4 sm:px-6 py-8 sm:py-12 space-y-8">
         {/* SECTION A — Minimal Header */}
         <header className="pb-6 border-b border-[#E6E1D3] flex items-center justify-between gap-4">
@@ -472,9 +475,20 @@ export default function App() {
               EBDA AI Lesson Studio
             </h1>
             <p className="text-[14px] text-[#525B58]">
-              Smart Lesson Planning, Made Simple.
+              {t.tagline}
             </p>
           </div>
+
+          <div className="flex items-center gap-3 shrink-0">
+            <button
+              type="button"
+              onClick={() => setLang(lang === 'ar' ? 'en' : 'ar')}
+              className="inline-flex items-center gap-1.5 min-h-[36px] px-3 py-1.5 text-[12.5px] font-medium rounded-[9px] border border-[#E6E1D3] bg-white text-[#141716] hover:border-[#1CA29A] hover:text-[#137A74] transition-colors whitespace-nowrap"
+              aria-label="Switch interface language"
+            >
+              <Languages className="w-3.5 h-3.5 text-[#137A74]" />
+              {t.langToggle}
+            </button>
 
           {settings?.logo_data_url && (
             <img
@@ -483,6 +497,7 @@ export default function App() {
               className="h-10 sm:h-11 max-w-[140px] w-auto object-contain shrink-0"
             />
           )}
+          </div>
         </header>
 
         {/* Access passcode — required by the backend for uploads and generation.
@@ -497,7 +512,7 @@ export default function App() {
               htmlFor="app-passcode"
               className="text-[13px] font-medium text-[#141716] whitespace-nowrap"
             >
-              App passcode
+              {t.passcodeLabel}
             </label>
           </div>
           <input
@@ -505,7 +520,7 @@ export default function App() {
             type="password"
             value={passcode}
             onChange={(e) => setPasscode(e.target.value)}
-            placeholder="Required for uploads and generation"
+            placeholder={t.passcodePlaceholder}
             autoComplete="off"
             className="flex-1 min-h-[38px] rounded-[9px] border border-[#CBC0A3] bg-white px-3 py-1.5 text-[13px] text-[#141716] focus:outline-none focus:border-[#1CA29A]"
           />
@@ -515,11 +530,11 @@ export default function App() {
               onClick={() => setPasscode('')}
               className="shrink-0 min-h-[38px] px-3 rounded-[9px] border border-[#E6E1D3] bg-white text-[12px] font-medium text-[#525B58] hover:border-[#CBC0A3] transition-colors"
             >
-              Clear
+              {t.passcodeClear}
             </button>
           )}
           <p className="text-[11.5px] text-[#525B58] sm:max-w-[220px]">
-            Kept only for this session and sent directly to the backend over HTTPS. Never stored.
+            {t.passcodeNote}
           </p>
         </section>
 
@@ -529,12 +544,13 @@ export default function App() {
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-stretch">
               <UploadCard
                 id="upload-curriculum"
-                title="Curriculum / Lesson File"
-                requirementLabel="Required"
+                title={t.curriculumTitle}
+                required
+                requirementLabel={t.required}
                 accept=".pdf,.docx,.pptx,.txt"
                 allowedExtensions={['pdf', 'docx', 'pptx', 'txt']}
                 formatHint="PDF, DOCX, PPTX, TXT"
-                helperText="Educational material used as the sole lesson source."
+                helperText={t.curriculumHelper}
                 icon="curriculum"
                 file={curriculumSummary}
                 uploading={uploadingCurriculum}
@@ -542,16 +558,18 @@ export default function App() {
                 onSelectFile={handleCurriculumSelect}
                 onRemoveFile={handleCurriculumRemove}
                 onValidationError={setCurriculumError}
+                t={t}
               />
 
               <UploadCard
                 id="upload-template"
-                title="Lesson Plan Template"
-                requirementLabel="Required"
+                title={t.templateTitle}
+                required
+                requirementLabel={t.required}
                 accept=".docx"
                 allowedExtensions={['docx']}
                 formatHint="DOCX only"
-                helperText="Editable Word template whose layout will be preserved."
+                helperText={t.templateHelper}
                 icon="template"
                 file={templateSummary}
                 uploading={uploadingTemplate}
@@ -559,16 +577,18 @@ export default function App() {
                 onSelectFile={handleTemplateSelect}
                 onRemoveFile={handleTemplateRemove}
                 onValidationError={setTemplateError}
+                t={t}
               />
 
               <UploadCard
                 id="upload-reference-pdf"
-                title="Reference PDF"
-                requirementLabel="Optional"
+                title={t.refPdfTitle}
+                required={false}
+                requirementLabel={t.optional}
                 accept=".pdf"
                 allowedExtensions={['pdf']}
                 formatHint="PDF"
-                helperText="Approved layout baseline to verify page count and fit."
+                helperText={t.refPdfHelper}
                 icon="reference"
                 file={refPdfSummary}
                 uploading={uploadingRefPdf}
@@ -576,6 +596,7 @@ export default function App() {
                 onSelectFile={handleRefPdfSelect}
                 onRemoveFile={handleRefPdfRemove}
                 onValidationError={setRefPdfError}
+                t={t}
               />
             </div>
           </section>
@@ -593,6 +614,7 @@ export default function App() {
                 advanced={advanced}
                 onChangeAdvanced={setAdvanced}
                 disabled={isGenerating}
+                t={t}
               />
             )}
 
@@ -603,6 +625,7 @@ export default function App() {
                 selectedCount={selectedLessonIds.length}
                 error={generationError}
                 onRetry={handleGenerate}
+                t={t}
               />
             ) : (
               <div className="space-y-2.5">
@@ -614,10 +637,10 @@ export default function App() {
                 >
                   <span>
                     {selectedLessonIds.length > 1
-                      ? `Generate ${selectedLessonIds.length} Lesson Plans`
-                      : 'Generate Lesson Plan'}
+                      ? t.generateMulti(selectedLessonIds.length)
+                      : t.generateSingle}
                   </span>
-                  <ArrowRight className="w-4 h-4 shrink-0" />
+                  <ArrowRight className="w-4 h-4 shrink-0 rtl:-scale-x-100" />
                 </button>
 
                 {readinessHint && (
@@ -631,7 +654,7 @@ export default function App() {
 
           {/* SECTION D — Results & Download */}
           {generatedPlans.length > 0 && (
-            <ResultsPanel plans={generatedPlans} batchDownload={batchDownload} />
+            <ResultsPanel plans={generatedPlans} batchDownload={batchDownload} t={t} />
           )}
         </main>
       </div>

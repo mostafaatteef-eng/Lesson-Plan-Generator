@@ -1,20 +1,13 @@
 import React from 'react';
 import { Check, Loader2, AlertCircle, RotateCcw } from 'lucide-react';
-
-export const GENERATION_STAGES = [
-  'Reading curriculum',
-  'Identifying lessons',
-  'Generating lesson plan',
-  'Formatting Word document',
-  'Converting to PDF',
-  'Validating output',
-] as const;
+import type { Strings } from '../i18n';
 
 interface GenerationProgressProps {
   activeStageIndex: number;
   selectedCount: number;
   error: string | null;
   onRetry: () => void;
+  t: Strings;
 }
 
 export const GenerationProgress: React.FC<GenerationProgressProps> = ({
@@ -22,7 +15,9 @@ export const GenerationProgress: React.FC<GenerationProgressProps> = ({
   selectedCount,
   error,
   onRetry,
+  t,
 }) => {
+  const GENERATION_STAGES = t.stages;
   if (error) {
     return (
       <div
@@ -33,7 +28,7 @@ export const GenerationProgress: React.FC<GenerationProgressProps> = ({
           <AlertCircle className="w-4 h-4 text-rose-700 shrink-0 mt-0.5" />
           <div className="space-y-1 min-w-0">
             <div className="text-[14px] font-semibold text-rose-900">
-              Generation could not be completed
+              {t.generationFailed}
             </div>
             <p className="text-[13px] text-rose-800 leading-relaxed">{error}</p>
           </div>
@@ -45,7 +40,7 @@ export const GenerationProgress: React.FC<GenerationProgressProps> = ({
             className="inline-flex items-center gap-2 min-h-[40px] px-4 py-2 text-[13px] font-semibold rounded-[10px] bg-[#137A74] hover:bg-[#0F6661] text-white transition-colors"
           >
             <RotateCcw className="w-3.5 h-3.5" />
-            Try Again
+            {t.tryAgain}
           </button>
         </div>
       </div>
@@ -62,11 +57,11 @@ export const GenerationProgress: React.FC<GenerationProgressProps> = ({
         <div className="flex items-center gap-2.5">
           <Loader2 className="w-4 h-4 animate-spin text-[#137A74] shrink-0" />
           <span className="text-[14px] font-semibold text-[#141716]">
-            {GENERATION_STAGES[activeStageIndex] || 'Processing'}…
+            {GENERATION_STAGES[activeStageIndex] || t.processing}…
           </span>
         </div>
         <span className="text-[12px] text-[#525B58] font-mono-tabular">
-          {selectedCount === 1 ? '1 lesson' : `${selectedCount} lessons`}
+          {t.lessonsCount(selectedCount)}
         </span>
       </div>
 
