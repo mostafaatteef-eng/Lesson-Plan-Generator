@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { ArrowRight } from 'lucide-react';
+import { ArrowRight, Lock } from 'lucide-react';
 import { UploadCard, type UploadedFileSummary } from './components/UploadCard';
 import { LessonSelector, type AdvancedOptions } from './components/LessonSelector';
 import { GenerationProgress } from './components/GenerationProgress';
@@ -12,7 +12,10 @@ import type {
   TemplateSchema,
 } from './types';
 
-const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '');
+// Backend origin: build-time VITE_API_BASE_URL wins; otherwise default to the
+// deployed PythonAnywhere backend. No secrets here - the passcode is entered
+// by the user at runtime and sent only as a request header over HTTPS.
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'https://mostafaatteef.pythonanywhere.com').replace(/\/$/, '');
 const apiUrl = (path: string) => `${API_BASE_URL}${path}`;
 
 export default function App() {
@@ -55,6 +58,28 @@ export default function App() {
     null
   );
 
+  // App passcode: kept only in memory for this session, never persisted,
+  // never part of the build. Sent as X-App-Passcode on mutating requests.
+  const [passcode, setPasscode] = useState('');
+
+  const authHeaders = (extra?: Record<string, string>): Record<string, string> => {
+    const headers: Record<string, string> = { ...(extra || {}) };
+    if (passcode) headers['X-App-Passcode'] = passcode;
+    return headers;
+  };
+
+  // Honest server error surfacing. A 401 means the passcode was rejected:
+  // clear it so the next attempt forces a fresh entry.
+  const explainHttpError = (status: number, data: unknown, fallback: string): string => {
+    const body = data as { error?: string; detail?: string } | null;
+    const serverMessage = body?.error || body?.detail || '';
+    if (status === 401) {
+      setPasscode('');
+      return 'Passcode missing or incorrect. Re-enter it above and try again.';
+    }
+    return serverMessage || fallback;
+  };
+
   // Load EBDA institutional settings on mount (includes official logo if configured)
   useEffect(() => {
     let active = true;
@@ -85,10 +110,16 @@ export default function App() {
     try {
       const fd = new FormData();
       fd.append('file', file);
-      const res = await fetch(apiUrl('/api/curriculum/upload'), { method: 'POST', body: fd });
+      const res = await fetch(apiUrl('/api/curriculum/upload'), {
+        method: 'POST',
+        headers: authHeaders(),
+        body: fd,
+      });
       const data = await res.json();
       if (!res.ok) {
-        throw new Error(data.error || 'Could not extract text from the uploaded curriculum.');
+        throw new Error(
+          explainHttpError(res.status, data, 'Could not extract text from the uploaded curriculum.')
+        );
       }
       const parsedUnit = data as CurriculumUnit;
       setUnit(parsedUnit);
@@ -112,7 +143,10 @@ export default function App() {
     setBatchDownload(null);
     setGenerationError(null);
     if (existingId) {
-      fetch(apiUrl(`/api/curriculum/${existingId}`), { method: 'DELETE' }).catch(() => {});
+      fetch(apiUrl(`/api/curriculum/${existingId}`), {
+        method: 'DELETE',
+        headers: authHeaders(),
+      }).catch(() => {});
     }
   };
 
@@ -126,10 +160,16 @@ export default function App() {
       if (stagedRefPdf) {
         fd.append('reference_pdf', stagedRefPdf);
       }
-      const res = await fetch(apiUrl('/api/template/upload'), { method: 'POST', body: fd });
+      const res = await fetch(apiUrl('/api/template/upload'), {
+        method: 'POST',
+        headers: authHeaders(),
+        body: fd,
+      });
       const data = await res.json();
       if (!res.ok) {
-        throw new Error(data.error || 'Could not parse the uploaded Word template.');
+        throw new Error(
+          explainHttpError(res.status, data, 'Could not parse the uploaded Word template.')
+        );
       }
       const parsedTemplate = data as TemplateSchema;
       setTemplate(parsedTemplate);
@@ -157,7 +197,10 @@ export default function App() {
     setBatchDownload(null);
     setGenerationError(null);
     if (existingId) {
-      fetch(apiUrl(`/api/template/${existingId}`), { method: 'DELETE' }).catch(() => {});
+      fetch(apiUrl(`/api/template/${existingId}`), {
+        method: 'DELETE',
+        headers: authHeaders(),
+      }).catch(() => {});
     }
   };
 
@@ -176,11 +219,12 @@ export default function App() {
       fd.append('reference_pdf', file);
       const res = await fetch(apiUrl(`/api/template/${template.template_id}/reference-pdf`), {
         method: 'POST',
+        headers: authHeaders(),
         body: fd,
       });
       const data = await res.json();
       if (!res.ok) {
-        throw new Error(data.error || 'Could not attach Reference PDF.');
+        throw new Error(explainHttpError(res.status, data, 'Could not attach Reference PDF.'));
       }
       setTemplate(data as TemplateSchema);
       setRefPdfSizeBytes(file.size);
@@ -200,6 +244,7 @@ export default function App() {
       try {
         const res = await fetch(apiUrl(`/api/template/${template.template_id}/reference-pdf`), {
           method: 'DELETE',
+          headers: authHeaders(),
         });
         if (res.ok) {
           const updated = (await res.json()) as TemplateSchema;
@@ -228,12 +273,12 @@ export default function App() {
       }));
       const res = await fetch(apiUrl(`/api/curriculum/${unit.unit_id}/boundaries`), {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ lessons: nextLessons }),
       });
       const data = await res.json();
       if (!res.ok) {
-        throw new Error(data.error || 'Failed to update lesson range.');
+        throw new Error(explainHttpError(res.status, data, 'Failed to update lesson range.'));
       }
       setUnit(data as CurriculumUnit);
     } catch (err) {
@@ -297,7 +342,7 @@ export default function App() {
       if (selectedLessonIds.length > 1) {
         const res = await fetch(apiUrl('/api/generate-batch'), {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: authHeaders({ 'Content-Type': 'application/json' }),
           body: JSON.stringify({
             lesson_ids: selectedLessonIds,
             base_context: baseContext,
@@ -305,7 +350,9 @@ export default function App() {
         });
         const data = await res.json();
         if (!res.ok) {
-          throw new Error(data.error || 'Batch lesson plan generation failed.');
+          throw new Error(
+            explainHttpError(res.status, data, 'Batch lesson plan generation failed.')
+          );
         }
         setGeneratedPlans(Array.isArray(data.plans) ? data.plans : []);
         setBatchDownload(
@@ -314,7 +361,7 @@ export default function App() {
       } else {
         const res = await fetch(apiUrl('/api/generate'), {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: authHeaders({ 'Content-Type': 'application/json' }),
           body: JSON.stringify({
             ...baseContext,
             lesson_id: selectedLessonIds[0],
@@ -322,7 +369,7 @@ export default function App() {
         });
         const data = await res.json();
         if (!res.ok) {
-          throw new Error(data.error || 'Lesson plan generation failed.');
+          throw new Error(explainHttpError(res.status, data, 'Lesson plan generation failed.'));
         }
         setGeneratedPlans([data as GeneratedPlanRecord]);
         setBatchDownload(null);
@@ -409,6 +456,44 @@ export default function App() {
             />
           )}
         </header>
+
+        {/* Access passcode — required by the backend for uploads and generation.
+            Session-memory only; sent as a header directly to the backend. */}
+        <section
+          aria-label="App passcode"
+          className="rounded-[14px] border border-[#E6E1D3] bg-white px-4 py-3.5 flex flex-col sm:flex-row sm:items-center gap-3"
+        >
+          <div className="flex items-center gap-2 shrink-0">
+            <Lock className="w-4 h-4 text-[#137A74]" />
+            <label
+              htmlFor="app-passcode"
+              className="text-[13px] font-medium text-[#141716] whitespace-nowrap"
+            >
+              App passcode
+            </label>
+          </div>
+          <input
+            id="app-passcode"
+            type="password"
+            value={passcode}
+            onChange={(e) => setPasscode(e.target.value)}
+            placeholder="Required for uploads and generation"
+            autoComplete="off"
+            className="flex-1 min-h-[38px] rounded-[9px] border border-[#CBC0A3] bg-white px-3 py-1.5 text-[13px] text-[#141716] focus:outline-none focus:border-[#1CA29A]"
+          />
+          {passcode && (
+            <button
+              type="button"
+              onClick={() => setPasscode('')}
+              className="shrink-0 min-h-[38px] px-3 rounded-[9px] border border-[#E6E1D3] bg-white text-[12px] font-medium text-[#525B58] hover:border-[#CBC0A3] transition-colors"
+            >
+              Clear
+            </button>
+          )}
+          <p className="text-[11.5px] text-[#525B58] sm:max-w-[220px]">
+            Kept only for this session and sent directly to the backend over HTTPS. Never stored.
+          </p>
+        </section>
 
         <main className="space-y-8">
           {/* SECTION B — File Upload Workspace */}
