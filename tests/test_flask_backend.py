@@ -176,3 +176,59 @@ def test_deletes_are_real(client):
         f"/api/curriculum/{unit['unit_id']}/boundaries", json={"lessons": []}, headers=HEADERS
     )
     assert r.status_code == 404
+
+
+def test_capability_ids_are_full_strength(client):
+    import re
+
+    unit = _upload_unit(client)
+    tpl = _upload_template(client)
+    assert re.fullmatch(r"unit_[0-9a-f]{32}", unit["unit_id"])
+    assert re.fullmatch(r"tpl_[0-9a-f]{32}", tpl["template_id"])
+    rec = client.post("/api/generate", json=_context(unit, tpl), headers=HEADERS).get_json()
+    assert re.fullmatch(r"plan_[0-9a-f]{32}", rec["plan_id"])
+
+
+def test_throttle_ignores_spoofed_forwarded_for(client):
+    for _ in range(5):
+        client.put("/api/settings", json={}, headers={"X-App-Passcode": "bad"})
+    # Attacker rotates X-Forwarded-For; the lock must still apply (keyed on peer).
+    r = client.put(
+        "/api/settings",
+        json={},
+        headers={"X-App-Passcode": "bad", "X-Forwarded-For": "203.0.113.99"},
+    )
+    assert r.status_code == 429
+
+
+def test_upload_size_bound(client, monkeypatch):
+    monkeypatch.setitem(fa.application.config, "MAX_CONTENT_LENGTH", 1024)
+    big = b"x" * 2048
+    r = client.post(
+        "/api/curriculum/upload",
+        data={"file": (io.BytesIO(big), "big.txt")},
+        content_type="multipart/form-data",
+        headers=HEADERS,
+    )
+    assert r.status_code == 413
+
+
+def test_batch_size_bound(client):
+    unit = _upload_unit(client)
+    tpl = _upload_template(client)
+    ctx = _context(unit, tpl)
+    body = {"lesson_ids": [unit["lessons"][0]["lesson_id"]] * 26, "base_context": ctx}
+    r = client.post("/api/generate-batch", json=body, headers=HEADERS)
+    assert r.status_code == 400
+
+
+def test_store_cap(client, monkeypatch):
+    monkeypatch.setattr(fa, "MAX_STORE_ITEMS", 1)
+    _upload_unit(client)
+    r = client.post(
+        "/api/curriculum/upload",
+        data={"file": (io.BytesIO(TXT), "unit2.txt")},
+        content_type="multipart/form-data",
+        headers=HEADERS,
+    )
+    assert r.status_code == 429

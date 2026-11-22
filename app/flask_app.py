@@ -27,8 +27,8 @@ from __future__ import annotations
 import hmac
 import io
 import os
+import secrets
 import time
-import uuid
 import zipfile
 from functools import wraps
 from typing import Dict, List, Optional
@@ -132,7 +132,9 @@ def require_passcode(fn):
     def wrapper(*args, **kwargs):
         if not APP_PASSCODE:
             return _err(503, "This action is disabled until a server-side APP_PASSCODE is configured.")
-        ip = request.headers.get("X-Forwarded-For", request.remote_addr or "unknown").split(",")[0].strip()
+        # Key on the immediate peer only. X-Forwarded-For is client-controlled
+        # unless a trusted proxy boundary strips it, so never key limits on it.
+        ip = request.remote_addr or "unknown"
         state = _PASSCODE_FAILURES.setdefault(ip, [0, 0.0])
         if state[1] > time.time():
             return _err(429, "Too many failed attempts. Try again later.")
@@ -179,8 +181,29 @@ def _render_pdf(docx_bytes: bytes) -> "tuple[Optional[bytes], bool]":
     return None, False
 
 
+# Free-host resource bounds: reject oversized uploads and cap retained
+# in-memory items so a session cannot exhaust the 512MB disk / small RAM.
+MAX_UPLOAD_BYTES = 25 * 1024 * 1024
+MAX_BATCH_LESSONS = 25
+MAX_STORE_ITEMS = 50
+
+
+def _store_put(store: Dict[str, Dict], key: str, value: Dict):
+    """Insert with a bound; returns an error response when the cap is hit."""
+    if key not in store and len(store) >= MAX_STORE_ITEMS:
+        return _err(429, "Session storage limit reached; delete unused items and retry.")
+    store[key] = value
+    return None
+
+
+def _new_capability_id(prefix: str) -> str:
+    """Full-strength (128-bit) unguessable capability ID."""
+    return f"{prefix}_{secrets.token_hex(16)}"
+
+
 def create_app() -> Flask:
     app = Flask(__name__)
+    app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_BYTES
 
     @app.after_request
     def add_cors(resp):
@@ -242,7 +265,11 @@ def create_app() -> Flask:
             unit = ingest_curriculum(raw, f.filename or "curriculum.txt")
         except Exception as exc:
             return _err(400, f"Could not parse curriculum file: {exc}")
-        UNITS[unit.unit_id] = {"unit": unit, "bytes": raw}
+        # Replace the engine's short id with a full-strength capability id.
+        unit.unit_id = _new_capability_id("unit")
+        err = _store_put(UNITS, unit.unit_id, {"unit": unit, "bytes": raw})
+        if err:
+            return err
         return jsonify(unit.model_dump())
 
     @app.put("/api/curriculum/<unit_id>/boundaries")
@@ -302,11 +329,14 @@ def create_app() -> Flask:
             )
         except Exception as exc:
             return _err(400, f"Could not parse template file: {exc}")
-        TEMPLATES[schema.template_id] = {
-            "schema": schema,
-            "docx_bytes": docx_bytes,
-            "ref_pdf_bytes": ref_bytes,
-        }
+        schema.template_id = _new_capability_id("tpl")
+        err = _store_put(
+            TEMPLATES,
+            schema.template_id,
+            {"schema": schema, "docx_bytes": docx_bytes, "ref_pdf_bytes": ref_bytes},
+        )
+        if err:
+            return err
         return jsonify(schema.model_dump())
 
     @app.post("/api/template/<template_id>/reference-pdf")
@@ -369,12 +399,14 @@ def create_app() -> Flask:
             return None, _err(404, "Template not found.")
 
         schema: TemplateSchema = tpl_entry["schema"]
-        if os.getenv("OPENAI_API_KEY"):
+        # Paid AI runs ONLY on explicit authorization: a saved key alone is not
+        # spend permission. ENABLE_AI_GENERATION=1 must also be set server-side
+        # after the user approves AI cost/scope. Default is the honest,
+        # clearly-labeled rules fallback grounded in the uploaded source.
+        if os.getenv("OPENAI_API_KEY") and os.getenv("ENABLE_AI_GENERATION") == "1":
             payload: LessonPlanPayload = generate_lesson_plan(unit, lesson, schema, ctx)
             generation_mode = "ai"
         else:
-            # Honest limited fallback: deterministic rules, clearly labeled,
-            # grounded in the uploaded lesson source. Never presented as AI.
             payload = build_rules_lesson_plan(unit, lesson, schema, ctx)
             generation_mode = "rules_fallback"
         out_docx, metrics = inject_lesson_plan_xml_safe(tpl_entry["docx_bytes"], payload)
@@ -395,7 +427,7 @@ def create_app() -> Flask:
         except Exception as exc:
             qa_status = f"blocked: QA could not run ({exc})"
 
-        plan_id = f"plan_{uuid.uuid4().hex[:8]}"
+        plan_id = _new_capability_id("plan")
         record = {
             "plan_id": plan_id,
             "generation_mode": generation_mode,
@@ -417,6 +449,9 @@ def create_app() -> Flask:
             "docx_bytes": out_docx,
             "pdf_bytes": out_pdf,
         }
+        if len(PLANS) > MAX_STORE_ITEMS:
+            del PLANS[plan_id]
+            return None, _err(429, "Session storage limit reached; delete unused plans and retry.")
         return record, None
 
     @app.post("/api/generate")
@@ -438,6 +473,8 @@ def create_app() -> Flask:
             return err
         if not req.lesson_ids:
             return _err(400, "Select at least one lesson.")
+        if len(req.lesson_ids) > MAX_BATCH_LESSONS:
+            return _err(400, f"Batch size is limited to {MAX_BATCH_LESSONS} lessons.")
         records = []
         zip_buf = io.BytesIO()
         with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
@@ -452,8 +489,10 @@ def create_app() -> Flask:
                 if stored["pdf_bytes"]:
                     zf.writestr(rec["pdf_filename"], stored["pdf_bytes"])
 
-        batch_id = f"batch_{uuid.uuid4().hex[:8]}"
-        BATCHES[batch_id] = {"filename": f"ATS-MU_Batch_{batch_id}.zip", "zip_bytes": zip_buf.getvalue()}
+        batch_id = _new_capability_id("batch")
+        err = _store_put(BATCHES, batch_id, {"filename": f"ATS-MU_Batch_{batch_id}.zip", "zip_bytes": zip_buf.getvalue()})
+        if err:
+            return err
         return jsonify({"batch_id": batch_id, "plans": records})
 
     @app.post("/api/regenerate-fields")
