@@ -1,0 +1,243 @@
+import React, { useRef, useState } from 'react';
+import {
+  FileText,
+  FileSpreadsheet,
+  FileCheck2,
+  Upload,
+  RefreshCw,
+  Trash2,
+  Loader2,
+  AlertCircle,
+  CheckCircle2,
+} from 'lucide-react';
+
+export interface UploadedFileSummary {
+  name: string;
+  sizeBytes: number;
+  metaLine?: string;
+}
+
+interface UploadCardProps {
+  id: string;
+  title: string;
+  requirementLabel: 'Required' | 'Optional';
+  accept: string;
+  allowedExtensions: string[];
+  formatHint: string;
+  helperText: string;
+  icon: 'curriculum' | 'template' | 'reference';
+  file: UploadedFileSummary | null;
+  uploading: boolean;
+  error: string | null;
+  onSelectFile: (file: File) => void;
+  onRemoveFile: () => void;
+  onValidationError: (message: string) => void;
+}
+
+const MAX_FILE_BYTES = 35 * 1024 * 1024;
+
+function formatFileSize(bytes: number): string {
+  if (!bytes || bytes < 1024) return `${bytes || 0} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+}
+
+export const UploadCard: React.FC<UploadCardProps> = ({
+  id,
+  title,
+  requirementLabel,
+  accept,
+  allowedExtensions,
+  formatHint,
+  helperText,
+  icon,
+  file,
+  uploading,
+  error,
+  onSelectFile,
+  onRemoveFile,
+  onValidationError,
+}) => {
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const [dragging, setDragging] = useState(false);
+
+  const validateAndForward = (candidate: File | undefined) => {
+    if (!candidate) return;
+    const ext = (candidate.name.split('.').pop() || '').toLowerCase();
+    if (!allowedExtensions.includes(ext)) {
+      onValidationError(`Unsupported file type ".${ext || 'unknown'}". Allowed: ${formatHint}.`);
+      return;
+    }
+    if (candidate.size === 0) {
+      onValidationError('The selected file is empty. Please choose a valid document.');
+      return;
+    }
+    if (candidate.size > MAX_FILE_BYTES) {
+      onValidationError('File exceeds the 35 MB maximum upload limit.');
+      return;
+    }
+    onSelectFile(candidate);
+  };
+
+  const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setDragging(false);
+    if (uploading) return;
+    validateAndForward(e.dataTransfer.files?.[0]);
+  };
+
+  const handleBrowse = () => {
+    if (uploading) return;
+    inputRef.current?.click();
+  };
+
+  const IconComponent =
+    icon === 'curriculum' ? FileText : icon === 'template' ? FileSpreadsheet : FileCheck2;
+
+  return (
+    <div
+      onDragOver={(e) => {
+        e.preventDefault();
+        if (!uploading) setDragging(true);
+      }}
+      onDragLeave={() => setDragging(false)}
+      onDrop={handleDrop}
+      className={`rounded-[14px] border transition-colors p-4 sm:p-5 flex flex-col justify-between gap-4 bg-white ${
+        error
+          ? 'border-rose-300 bg-rose-50/30'
+          : dragging
+            ? 'border-[#1CA29A] bg-[#FFEAAF]/25'
+            : file
+              ? 'border-[#1CA29A]/50 shadow-[0_1px_2px_rgba(20,23,22,0.03)]'
+              : 'border-[#E6E1D3] hover:border-[#CBC0A3] shadow-[0_1px_2px_rgba(20,23,22,0.03)]'
+      }`}
+    >
+      <input
+        ref={inputRef}
+        id={id}
+        type="file"
+        accept={accept}
+        onChange={(e) => {
+          validateAndForward(e.target.files?.[0]);
+          e.target.value = '';
+        }}
+        className="hidden"
+      />
+
+      {/* Card Header */}
+      <div className="space-y-1.5">
+        <div className="flex items-start justify-between gap-2">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <span
+              className={`w-8 h-8 rounded-[10px] flex items-center justify-center shrink-0 ${
+                file
+                  ? 'bg-[#1CA29A]/12 text-[#137A74]'
+                  : 'bg-[#FFEAAF]/35 text-[#525B58]'
+              }`}
+            >
+              {uploading ? (
+                <Loader2 className="w-4 h-4 animate-spin text-[#137A74]" />
+              ) : (
+                <IconComponent className="w-4 h-4" />
+              )}
+            </span>
+            <h2 className="text-[14px] font-semibold text-[#141716] leading-snug">
+              {title}
+            </h2>
+          </div>
+
+          <span
+            className={`text-[12px] font-medium shrink-0 ${
+              requirementLabel === 'Required' ? 'text-[#137A74]' : 'text-[#6B726F]'
+            }`}
+          >
+            {requirementLabel}
+          </span>
+        </div>
+
+        <p className="text-[12.5px] text-[#525B58] leading-relaxed">
+          {helperText}
+        </p>
+      </div>
+
+      {/* Dropzone OR Uploaded File Summary */}
+      {!file ? (
+        <button
+          type="button"
+          onClick={handleBrowse}
+          disabled={uploading}
+          className={`w-full rounded-[12px] border border-dashed px-3.5 py-5 text-center transition-colors cursor-pointer disabled:cursor-wait ${
+            dragging
+              ? 'border-[#1CA29A] bg-[#FFEAAF]/20'
+              : 'border-[#CBC0A3] bg-[#FAF9F5]/80 hover:border-[#1CA29A] hover:bg-[#FFEAAF]/15'
+          }`}
+        >
+          <Upload className="w-4 h-4 mx-auto mb-2 text-[#137A74]" />
+          <div className="text-[13px] font-medium text-[#141716]">
+            {uploading ? 'Analyzing document…' : 'Drop file or click to browse'}
+          </div>
+          <div className="mt-1 text-[11.5px] text-[#6B726F] font-mono-tabular">
+            {formatHint}
+          </div>
+        </button>
+      ) : (
+        <div className="rounded-[12px] border border-[#E6E1D3] bg-[#FAF9F5] p-3.5 space-y-3">
+          <div className="flex items-start gap-2.5 min-w-0">
+            <CheckCircle2 className="w-4 h-4 text-[#137A74] shrink-0 mt-0.5" />
+            <div className="min-w-0 flex-1 space-y-0.5">
+              <div
+                dir="auto"
+                title={file.name}
+                className="text-[13px] font-medium text-[#141716] truncate font-arabic"
+              >
+                {file.name}
+              </div>
+              <div className="text-[11.5px] text-[#525B58] font-mono-tabular flex flex-wrap items-center gap-x-1.5">
+                <span>{formatFileSize(file.sizeBytes)}</span>
+                {file.metaLine && (
+                  <>
+                    <span aria-hidden="true">·</span>
+                    <span>{file.metaLine}</span>
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 pt-2 border-t border-[#E6E1D3]">
+            <button
+              type="button"
+              onClick={handleBrowse}
+              disabled={uploading}
+              className="flex-1 inline-flex items-center justify-center gap-1.5 min-h-[36px] px-3 py-1.5 text-[12px] font-medium rounded-[9px] border border-[#E6E1D3] bg-white text-[#141716] hover:border-[#1CA29A] hover:text-[#137A74] transition-colors whitespace-nowrap shrink-0 disabled:opacity-50"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${uploading ? 'animate-spin' : ''}`} />
+              Replace
+            </button>
+            <button
+              type="button"
+              onClick={onRemoveFile}
+              disabled={uploading}
+              className="inline-flex items-center justify-center gap-1.5 min-h-[36px] px-3 py-1.5 text-[12px] font-medium rounded-[9px] border border-[#E6E1D3] bg-white text-[#525B58] hover:border-rose-300 hover:text-rose-700 transition-colors whitespace-nowrap shrink-0 disabled:opacity-50"
+              aria-label={`Remove ${title}`}
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              Remove
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Clear Inline Error Feedback */}
+      {error && (
+        <div
+          role="alert"
+          className="flex items-start gap-2 text-[12px] text-rose-700 leading-snug"
+        >
+          <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+          <span>{error}</span>
+        </div>
+      )}
+    </div>
+  );
+};

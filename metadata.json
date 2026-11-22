@@ -1,0 +1,8 @@
+{
+  "name": "ATS-MU AI Lesson Plan Generator",
+  "description": "Intelligent curriculum analysis, pedagogical planning, and pixel-accurate DOCX template preservation for Arabic and English lesson plans.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
