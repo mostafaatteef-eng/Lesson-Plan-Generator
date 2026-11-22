@@ -135,18 +135,28 @@ export default function App() {
   };
 
   const handleCurriculumRemove = async () => {
-    const existingId = unit?.unit_id;
-    setUnit(null);
-    setSelectedLessonIds([]);
+    if (!unit) return;
     setCurriculumError(null);
-    setGeneratedPlans([]);
-    setBatchDownload(null);
-    setGenerationError(null);
-    if (existingId) {
-      fetch(apiUrl(`/api/curriculum/${existingId}`), {
+    try {
+      const res = await fetch(apiUrl(`/api/curriculum/${unit.unit_id}`), {
         method: 'DELETE',
         headers: authHeaders(),
-      }).catch(() => {});
+      });
+      // 404 means the server already forgot it, which is the goal state.
+      if (!res.ok && res.status !== 404) {
+        const data = await res.json().catch(() => null);
+        throw new Error(
+          explainHttpError(res.status, data, 'Could not remove the curriculum on the server.')
+        );
+      }
+      setUnit(null);
+      setSelectedLessonIds([]);
+      setGeneratedPlans([]);
+      setBatchDownload(null);
+      setGenerationError(null);
+    } catch (err) {
+      // State preserved on failure so nothing appears removed when it is not.
+      setCurriculumError(err instanceof Error ? err.message : 'Curriculum removal failed.');
     }
   };
 
@@ -189,18 +199,26 @@ export default function App() {
   };
 
   const handleTemplateRemove = async () => {
-    const existingId = template?.template_id;
-    setTemplate(null);
-    setTemplateSizeBytes(0);
+    if (!template) return;
     setTemplateError(null);
-    setGeneratedPlans([]);
-    setBatchDownload(null);
-    setGenerationError(null);
-    if (existingId) {
-      fetch(apiUrl(`/api/template/${existingId}`), {
+    try {
+      const res = await fetch(apiUrl(`/api/template/${template.template_id}`), {
         method: 'DELETE',
         headers: authHeaders(),
-      }).catch(() => {});
+      });
+      if (!res.ok && res.status !== 404) {
+        const data = await res.json().catch(() => null);
+        throw new Error(
+          explainHttpError(res.status, data, 'Could not remove the template on the server.')
+        );
+      }
+      setTemplate(null);
+      setTemplateSizeBytes(0);
+      setGeneratedPlans([]);
+      setBatchDownload(null);
+      setGenerationError(null);
+    } catch (err) {
+      setTemplateError(err instanceof Error ? err.message : 'Template removal failed.');
     }
   };
 
@@ -238,21 +256,31 @@ export default function App() {
 
   const handleRefPdfRemove = async () => {
     setRefPdfError(null);
-    setStagedRefPdf(null);
-    setRefPdfSizeBytes(0);
-    if (template?.has_reference_pdf) {
-      try {
-        const res = await fetch(apiUrl(`/api/template/${template.template_id}/reference-pdf`), {
-          method: 'DELETE',
-          headers: authHeaders(),
-        });
-        if (res.ok) {
-          const updated = (await res.json()) as TemplateSchema;
-          setTemplate(updated);
-        }
-      } catch {
-        // Local reference state already cleared
+    if (!template?.has_reference_pdf) {
+      // Nothing on the server; only local staging to clear.
+      setStagedRefPdf(null);
+      setRefPdfSizeBytes(0);
+      return;
+    }
+    try {
+      const res = await fetch(apiUrl(`/api/template/${template.template_id}/reference-pdf`), {
+        method: 'DELETE',
+        headers: authHeaders(),
+      });
+      if (!res.ok && res.status !== 404) {
+        const data = await res.json().catch(() => null);
+        throw new Error(
+          explainHttpError(res.status, data, 'Could not remove the Reference PDF on the server.')
+        );
       }
+      setStagedRefPdf(null);
+      setRefPdfSizeBytes(0);
+      if (res.ok) {
+        const updated = (await res.json()) as TemplateSchema;
+        setTemplate(updated);
+      }
+    } catch (err) {
+      setRefPdfError(err instanceof Error ? err.message : 'Reference PDF removal failed.');
     }
   };
 
