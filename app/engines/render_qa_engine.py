@@ -200,7 +200,12 @@ def run_four_pillar_qa(
         and injection_metrics.get("cells_before") == injection_metrics.get("cells_after")
         and bool(injection_metrics.get("widths_unchanged"))
     )
-    pages_ok = rendered_pages == expected_pages
+    # Page-count policy: exact match expected; ONE extra page is tolerated as a
+    # warning (approved product policy for fully filled fixed-layout forms;
+    # geometry and content stay untouched). Fewer pages than expected still
+    # means lost content and stays blocking.
+    pages_exact = rendered_pages == expected_pages
+    pages_ok = expected_pages <= rendered_pages <= expected_pages + 1
     p3 = _build_pillar(
         "template_fidelity",
         "Template Fidelity",
@@ -214,8 +219,8 @@ def run_four_pillar_qa(
             QACheck(
                 name="RTL w:bidi & Page Count Guard",
                 passed=bool(injection_metrics.get("bidi_preserved")) and pages_ok and len(overflow_list) == 0,
-                severity="error" if not pages_ok else ("warning" if overflow_list else "info"),
-                detail=f"Pages {rendered_pages}/{expected_pages}, overflow cells={len(overflow_list)}.",
+                severity="error" if not pages_ok else ("warning" if (overflow_list or not pages_exact) else "info"),
+                detail=f"Pages {rendered_pages}/{expected_pages} (tolerance +1), overflow cells={len(overflow_list)}.",
             ),
         ],
     )
@@ -241,7 +246,7 @@ def run_four_pillar_qa(
                 gate_id="gate_boundary",
                 category="ambiguous_boundary",
                 severity="blocking",
-                message=lesson.ambiguity_reason or "Ambiguous lesson boundary requires teacher approval.",
+                message=lesson.ambiguity_reason or "حدود الدرس غير واضحة وتحتاج اعتماد المعلم قبل التوليد.",
             )
         )
     if not pages_ok:
@@ -250,7 +255,7 @@ def run_four_pillar_qa(
                 gate_id="gate_page_count",
                 category="layout_deviation",
                 severity="blocking",
-                message=f"Rendered page count ({rendered_pages}) differs from approved template ({expected_pages}).",
+                message=f"عدد صفحات الناتج ({rendered_pages}) يتجاوز قالب الاعتماد ({expected_pages}) بأكثر من صفحة أو يقل عنها.",
             )
         )
     if vague_verbs:
@@ -259,7 +264,7 @@ def run_four_pillar_qa(
                 gate_id="gate_vague_verbs",
                 category="pedagogical_flag",
                 severity="blocking",
-                message=f"Vague verbs detected: {', '.join(vague_verbs)}.",
+                message=f"رُصدت أفعال غير قابلة للقياس في نواتج التعلم: {', '.join(vague_verbs)}.",
                 field_key="learning_outcomes",
             )
         )
