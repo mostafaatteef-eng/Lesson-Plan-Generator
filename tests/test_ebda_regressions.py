@@ -181,3 +181,34 @@ def test_official_lesson_badge_never_hardcodes_first_lesson():
     assert 'number = match_number.group(1) if match_number else "غير محدد"' in source
     assert 'f"الدرس ({number})"' in source
     assert '["الدرس (١)"]' not in source
+
+
+def test_generic_lesson_headers_ignore_contents_and_do_not_overlap():
+    from app.engines.curriculum_engine import detect_lesson_boundaries
+    from app.models.schemas import PageText
+    pages = [PageText(page_number=1,text="Contents\nLesson 1: Measurement 2\nLesson 2: Units 4\nLesson 3: Motion 6"),
+        PageText(page_number=2,text="Lesson 1\nMeasurement\n" + "Measurement has three elements and tools used for each quantity. " * 6),
+        PageText(page_number=3,text="More explanatory content for measurement."),
+        PageText(page_number=4,text="School running header\nLesson 2\nUnits\n" + "Units express the physical quantity using agreed standard definitions. " * 6)]
+    _, lessons, _ = detect_lesson_boundaries(pages,"guide.pdf")
+    assert [(x.start_page,x.end_page) for x in lessons] == [(2,3),(4,4)]
+    assert lessons[0].title == "Lesson 1: Measurement"
+    assert "School running header" not in lessons[0].raw_text
+
+
+def test_mixed_script_run_directions_are_explicit_and_text_is_preserved():
+    from lxml import etree
+    from app.engines.template_engine import _set_paragraph_text_preserve_format, _qn
+    p=etree.fromstring('<w:p xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:pPr><w:bidi/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Cairo"/></w:rPr><w:t>old</w:t></w:r></w:p>')
+    value="أدوات المصدر: Google Forms / QuestionPro. ثم يراجع المعلم."
+    _set_paragraph_text_preserve_format(p,value)
+    assert ''.join(p.itertext()).replace('\u200e','') == value
+    latin=[r for r in p.findall(_qn('r')) if 'Google' in ''.join(r.itertext())][0]
+    assert latin.find(f"{_qn('rPr')}/{_qn('rtl')}").get(_qn('val')) == '0'
+    assert p.find(f"{_qn('pPr')}/{_qn('bidi')}") is not None
+
+
+def test_context_accepts_output_language_without_silently_ignoring_it():
+    from app.models.schemas import GenerationContext
+    assert 'output_language' in GenerationContext.model_fields
+    assert GenerationContext.model_fields['output_language'].default == 'auto'
