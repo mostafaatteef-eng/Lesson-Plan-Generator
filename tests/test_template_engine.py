@@ -1,4 +1,5 @@
 
+
 def _build_official_like_template():
     """Synthetic template mirroring the official ATS-MU structure:
     narrow empty separator columns between label and value cells, and a
