@@ -1,14 +1,14 @@
 # Installing the school-approved default Word/PDF templates
 
-The public GitHub repository must NOT contain original named teacher documents.
+The new default is a compact four-page form (school metadata, outcomes, activities, detailed evaluation).\nThe public GitHub repository must NOT contain original named teacher documents.
 Prepare a redacted blank form (DOCX) and a corresponding reference PDF, then
 install them in a **private directory on the PythonAnywhere server**.
 
 The Flask application now auto-discovers these files under the home directory:
 
 ```text
-~/ebda_private_assets/EBDA_Official_Template_2026-2027.docx
-~/ebda_private_assets/EBDA_Official_Reference_2026-2027.pdf
+~/ebda_private_assets/EBDA_Compact_Template_2026-2027.docx
+~/ebda_private_assets/EBDA_Compact_Reference_2026-2027.pdf
 ```
 
 An authorized PythonAnywhere administrator must:
