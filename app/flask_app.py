@@ -368,6 +368,9 @@ def _run_generation_scoped(
     """
     # Also repairs inherited defaults sent by an already-open older UI.
     ctx = resolve_subject_metadata(ctx, SETTINGS["current"])
+    # Older parsed uploads may carry a filename as the fallback unit title.
+    if unit.unit_title.strip() == Path(unit.filename).stem:
+        unit = unit.model_copy(update={"unit_title": "غير محددة في المصدر"})
     # Paid AI runs ONLY on explicit authorization: a saved key alone is not
     # spend permission. ENABLE_AI_GENERATION=1 must also be set server-side
     # after the user approves AI cost/scope. Default is the honest,

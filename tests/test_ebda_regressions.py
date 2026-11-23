@@ -232,3 +232,17 @@ def test_subject_metadata_does_not_inherit_specialty_or_invent_a_room():
     assert resolve_subject_metadata(ctx.model_copy(update={'program_or_course': settings.specialization_ar}), settings) == ctx.model_copy(update={'program_or_course': settings.specialization_ar})
     custom = ctx.model_copy(update={'branch':'Mechanics','job_title':'Physics teacher','location':'Room 12'})
     assert resolve_subject_metadata(custom, settings) == custom
+
+
+def test_unit_fallback_never_uses_uploaded_filename():
+    from app.engines.curriculum_engine import detect_lesson_boundaries
+    from app.models.schemas import PageText
+    page = PageText(page_number=1, text='Lesson 2: Basic units\n' + 'These physical quantities are fundamental. ' * 15)
+    for filename in ['file-4ef406d2-4.pdf', 'private-teacher-name.pdf', 'Course.docx']:
+        title, lessons, warnings = detect_lesson_boundaries([page], filename)
+        assert title == 'غير محددة في المصدر'
+        assert filename.split('.')[0] not in title
+        assert lessons[0].title == 'Lesson 2: Basic units'
+    actual = PageText(page_number=1, text='Unit 2: Measurement\n' + page.text)
+    title, _, _ = detect_lesson_boundaries([actual], 'private-file.pdf')
+    assert title == 'Unit 2: Measurement'
