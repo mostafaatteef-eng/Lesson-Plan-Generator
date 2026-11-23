@@ -84,11 +84,11 @@ class InstitutionSettings(BaseModel):
     default_teacher_name: str = ""
     default_job_title: str = "معلم أول الذكاء الاصطناعي وتحليل البيانات"
     default_grade_level: str = "الصف الثاني الثانوي التكنولوجي"
-    default_academic_year: str = "٢٠٢٥-٢٠٢٦"
+    default_academic_year: str = "٢٠٢٦-٢٠٢٧"
     default_branch: str = "الذكاء الاصطناعي وتحليل البيانات"
     default_knowledge_code: str = "TPK04"
     default_location: str = "معمل الذكاء الاصطناعي وتحليل البيانات"
-    default_duration_minutes: int = 45
+    default_duration_minutes: int = 50
     logo_data_url: Optional[str] = None
     logo_filename: Optional[str] = None
     extracted_brand_color: Optional[str] = None
