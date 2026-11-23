@@ -50,16 +50,14 @@ def normalize_element_durations(elements: List[LessonElementPlan], total_minutes
 
 
 def _verify_excerpt(excerpt: str, source_text: str) -> bool:
-    clean_ex = " ".join(excerpt.split()).strip()
-    if len(clean_ex) < 6:
-        return False
-    clean_src = " ".join(source_text.split())
-    if clean_ex in clean_src:
-        return True
-    tokens = [t for t in clean_ex.split() if len(t) > 2]
-    if not tokens:
-        return False
-    return sum(1 for t in tokens if t in clean_src) / len(tokens) >= 0.7
+    """Only mark an excerpt verified when it appears verbatim in the source.
+
+    Whitespace is normalized to account for line wrapping in PDF extraction.
+    Word overlap is deliberately not sufficient for a verbatim citation.
+    """
+    clean_excerpt = " ".join(excerpt.split()).strip()
+    clean_source = " ".join(source_text.split())
+    return len(clean_excerpt) >= 6 and clean_excerpt in clean_source
 
 
 def generate_lesson_plan(
