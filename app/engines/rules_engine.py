@@ -421,7 +421,7 @@ def _grounded_practice(payload: LessonPlanPayload, lesson: LessonBoundary) -> Le
             ('components', r"^يعدد الطالب مكونات (.+?) الواردة في الدرس"),
             ('components', r"^يعدد الطالب عناصر (.+?) الوارد في الدرس"),
             ('classification', r"^يصنف الطالب (.+?) إلى الفئات المذكورة في الدرس"),
-            ('classification', r"^يصنف الطالب الفرعين (.+?) الوارد في الدرس"),
+            ('branches', r"^يصنف الطالب الفرعين (.+?) الوارد في الدرس"),
             ('unit', r"^يحدد الطالب وحدة قياس (.+?) (?:ورمزها من جدول|المذكورة في) الدرس"),
         ]
         for kind, pattern in patterns:
@@ -436,6 +436,9 @@ def _grounded_practice(payload: LessonPlanPayload, lesson: LessonBoundary) -> Le
             elif kind == 'components':
                 question = f"عدد مكونات {target} المذكورة في الدرس."
                 criterion = f"قائمة مكونات {target} تطابق المصدر دون إضافة"
+            elif kind == 'branches':
+                question = f"سم الفرعين المذكورين: {target}، وحدد المجال الذي ينتميان إليه."
+                criterion = f"تسمية {target} وربطهما بالمجال المذكور في المصدر"
             elif kind == 'classification':
                 question = f"ما تصنيف {target} الوارد في الدرس؟ سم الفئات."
                 criterion = f"فئات {target} وتسمياتها صحيحة وفق المصدر"
@@ -472,12 +475,12 @@ def _grounded_practice(payload: LessonPlanPayload, lesson: LessonBoundary) -> Le
         activity = getattr(payload, f"activity_{num}")
         targets = ' / '.join(card[0] for card in group)
         activity.activity_type = "أخرى"
-        activity.purpose = f"مهمة مقترحة: إجابات موثقة عن {targets}."
-        activity.teacher_procedures = f"يعرض مواضع {targets} في الدرس. يطرح: {questions(group)} ثم يصحح الإجابات وفق المصدر."
+        activity.purpose = f"بطاقة مقترحة: {targets}."
+        activity.teacher_procedures = f"يطرح: {questions(group)} يصحح الإجابات من مواضعها في الدرس."
         actor = "الطالب" if num == 1 else "أفراد المجموعة"
-        activity.student_procedures = f"يكتب {actor} إجابة مستقلة لكل سؤال عن {targets}، ثم يحدد موضع الدليل ويصحح الإجابة بعد المراجعة."
-        activity.student_note = f"الناتج المقترح: بطاقة إجابة عن {targets}. النجاح: إجابة صحيحة لكل سؤال مع دليلها من الدرس."
-        setattr(payload, f"element_{num}_summary", f"محور المهمة: {targets}. {questions(group)}")
+        activity.student_procedures = f"يجيب {actor} عن الأسئلة المحددة، مع موضع الدليل، ثم يصحح الإجابة بعد المراجعة."
+        activity.student_note = "الناتج: بطاقة إجابة للأسئلة المحددة أعلاه. النجاح: إجابة صحيحة لكل سؤال مع موضع الدليل."
+        setattr(payload, f"element_{num}_summary", f"مفاهيم الدرس المستهدفة: {targets}. المطلوب: التعريف أو القائمة أو الوحدة كما يحدد سؤال النشاط أدناه.")
         for subfield in ['purpose','teacher_procedures','student_procedures','student_note']:
             evidence_for(f"activity_{num}.{subfield}", group)
         evidence_for(f"element_{num}_summary", group)
@@ -488,7 +491,7 @@ def _grounded_practice(payload: LessonPlanPayload, lesson: LessonBoundary) -> Le
             evidence_for(f"rubric_group_{num}_items.{i}", [card])
     payload.assessment_group_3 = "بطاقة خروج دون الرجوع للنص: " + cards[-1][1]
     evidence_for('assessment_group_3', [cards[-1]])
-    payload.warm_up = "تكييف تدريسي مقترح من مفاهيم الدرس. سؤال تمهيدي: " + cards[0][1] + " راجع إجابتك بعد دراسة المفهوم في المصدر."
+    payload.warm_up = "تكييف تدريسي مقترح من مفاهيم الدرس. سؤال تمهيدي: " + cards[0][1]
     evidence_for('warm_up', [cards[0]])
     summaries = [payload.warm_up, payload.element_1_summary, payload.element_2_summary,
                  payload.assessment_group_1, payload.assessment_group_3]
