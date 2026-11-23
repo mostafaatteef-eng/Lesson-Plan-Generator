@@ -305,4 +305,16 @@ export interface GeneratedPlanRecord {
   pdf_filename: string;
   pdf_available?: boolean;
   pdf_error?: string | null;
+  /** Request-scoped delivery: artifacts arrive in the generation response. */
+  docx_b64?: string | null;
+  pdf_b64?: string | null;
+}
+
+export interface GenerationFailure {
+  lesson_id: string;
+  lesson_title: string;
+  detail: string;
+  qa_blocked?: boolean;
+  qa_report?: QAReport | null;
+  blocking_gates?: HumanApprovalGate[];
 }
