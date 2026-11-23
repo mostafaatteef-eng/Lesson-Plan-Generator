@@ -42,7 +42,7 @@ def _normalize_label(raw: str, counts: Dict[str, int]) -> str:
     mapping = [
         (r"^برنامج\s*\/\s*مقرر$", "program_or_course"),
         (r"^البرنامج\s*\/\s*المقرر$", "program_or_course_meta"),
-        (r"^الاسم$", "teacher_name"),
+        (r"^(?:الاسم|اسم المعلم)$", "teacher_name"),
         (r"^الوظيفة$", "job_title"),
         (r"^العام الدراسي$", "academic_year"),
         (r"^المدرسة$", "school_name"),
@@ -865,7 +865,7 @@ def inject_lesson_plan_xml_safe(
 
                 if re.match(r"^برنامج\s*\/\s*مقرر$|^البرنامج\s*\/\s*المقرر$", txt):
                     write_tc(nxt, [payload.program_or_course], txt, 140)
-                elif txt == "الاسم":
+                elif txt in ("الاسم", "اسم المعلم"):
                     write_tc(nxt, [payload.teacher_name], txt, 120)
                 elif txt == "الوظيفة":
                     write_tc(nxt, [payload.job_title], txt, 120)
