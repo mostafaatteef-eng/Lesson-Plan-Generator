@@ -20,10 +20,13 @@ import { STRINGS, type Lang } from './i18n';
 // are requested from the teacher or embedded in the bundle.
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'https://mostafaatteef.pythonanywhere.com').replace(/\/$/, '');
 const apiUrl = (path: string) => `${API_BASE_URL}${path}`;
+const FRONTEND_RELEASE = '2026.11.23.4';
 
 export default function App() {
   // Institutional defaults & optional official uploaded EBDA logo
   const [settings, setSettings] = useState<InstitutionSettings | null>(null);
+  const [backendState, setBackendState] = useState<'checking' | 'online' | 'offline'>('checking');
+  const [backendVersion, setBackendVersion] = useState<string | null>(null);
 
   // Section B — Upload state (3 independent cards)
   const [unit, setUnit] = useState<CurriculumUnit | null>(null);
@@ -129,7 +132,14 @@ export default function App() {
     fetch(apiUrl('/api/health'))
       .then((res) => (res.ok ? res.json() : null))
       .then(async (data) => {
-        if (!active || !data?.defaults?.template) return;
+        if (!active) return;
+        if (!data || data.status !== 'ok') {
+          setBackendState('offline');
+          return;
+        }
+        setBackendState('online');
+        setBackendVersion(typeof data.version === 'string' ? data.version : null);
+        if (!data?.defaults?.template) return;
         setServerDefaults({
           template: true,
           reference_pdf: Boolean(data.defaults.reference_pdf),
@@ -147,6 +157,7 @@ export default function App() {
         }
       })
       .catch(() => {
+        if (active) setBackendState('offline');
         // Health endpoint unreachable; template upload stays required.
       });
 
@@ -630,7 +641,15 @@ export default function App() {
             </p>
           </div>
 
-          <div aria-hidden="true" />
+          <div className="justify-self-end text-end space-y-1" role="status" aria-live="polite">
+            <span className="block text-[11px] text-[#596A72]">UI v{FRONTEND_RELEASE}</span>
+            <span className={`block text-[11px] font-medium ${backendState === 'online' ? 'text-emerald-700' : backendState === 'offline' ? 'text-rose-700' : 'text-[#596A72]'}`}>
+              {lang === 'ar'
+                ? backendState === 'online' ? 'الخادم متصل' : backendState === 'offline' ? 'الخادم غير متاح' : 'جارٍ فحص الخادم'
+                : backendState === 'online' ? 'API connected' : backendState === 'offline' ? 'API unavailable' : 'Checking API'}
+              {backendState === 'online' && backendVersion ? ` · v${backendVersion}` : ''}
+            </span>
+          </div>
         </header>
 
         <main className="space-y-8">
