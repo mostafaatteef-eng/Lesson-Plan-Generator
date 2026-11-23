@@ -251,6 +251,14 @@ def build_rules_lesson_plan(
     excerpts = _pick_excerpts(lesson)
     core = _core_title(lesson.title)
     learning_outcomes = _outcome_phrases(lesson) or [f"يشرح الطالب {core}"]
+    # Specific source evidence must be visible in the activities and assessments.
+    # Do not claim pedagogical depth that the uploaded material cannot support.
+    source_points = [_clip(e, 115) for e in excerpts if e.strip()]
+    if not source_points:
+        source_points = [core]
+    first_point = source_points[0]
+    second_point = source_points[min(1, len(source_points) - 1)]
+    third_point = source_points[min(2, len(source_points) - 1)]
 
     total = max(15, context.total_duration_minutes)
     elements = normalize_element_durations(
@@ -262,7 +270,7 @@ def build_rules_lesson_plan(
                 time_formatted=format_minutes(max(1, round(total * frac))),
                 teaching_strategy=strategy,
                 brief_description=(
-                    f"{name} حول: {core}"
+                    f"{name}: {source_points[min(i, len(source_points) - 1)]}"
                 ),
             )
             for i, (name, frac, strategy) in enumerate(_PHASES)
@@ -287,14 +295,12 @@ def build_rules_lesson_plan(
             activity_type="دراسة حالة" if num == 1 else "بحث",
             purpose=purpose,
             teacher_procedures=(
-                f"يعرض المعلم نشاطًا حول {core} ويوجه "
-                + ("المجموعات" if cooperative else "الطلاب")
-                + " ويتابع الأداء."
+                f"يعرض المعلم مقتطف المنهج: «{first_point if num == 1 else second_point}» ثم يطلب تفسير الفكرة بدليل من النص، ويصحح الإجابات."
             ),
             student_procedures=(
-                "يعمل الطلاب في مجموعات على النشاط، ثم يعرضون النتائج ويناقشونها."
-                if cooperative
-                else "يعمل كل طالب على النشاط بشكل فردي، ثم يعرض النتائج ويناقشها."
+                (f"تحدد كل مجموعة فكرة من «{first_point if num == 1 else second_point}» وتشرحها بمثال من المادة، ثم تعرض دليلها."
+                 if cooperative
+                 else f"يستخرج الطالب معلومة من «{first_point if num == 1 else second_point}» ويشرحها ويذكر شاهدها من الدرس.")
             ),
             student_note=note,
         )
@@ -319,31 +325,31 @@ def build_rules_lesson_plan(
         lesson_elements=elements,
         selected_strategies=selected_strategies,
         selected_resources=selected_resources,
-        assessment_group_1="ملاحظة أداء الطلاب أثناء نشاط الدرس",
-        assessment_group_2="الاستجابة للأسئلة الشفوية أثناء العرض",
-        assessment_group_3="تسليم ورقة العمل الختامية",
+        assessment_group_1=f"سؤال: ما الفكرة الأساسية في المقتطف «{first_point}»؟ ادعم إجابتك من النص.",
+        assessment_group_2=f"طبّق أو فسّر المعلومة التالية بمثال من الدرس: «{second_point}».",
+        assessment_group_3=f"قارن ما تعلمته بالمعلومة الواردة: «{third_point}»؛ بيّن وجه الارتباط.",
         presentation_class="، ".join(context.class_sections) if context.class_sections else "",
         location=context.location,
         lesson_date=context.lesson_date,
         total_duration_minutes=total,
-        warm_up=f"سؤال تمهيدي حول: {core}",
+        warm_up=f"اقرأ العبارة من الدرس: «{first_point}». ما المقصود بها؟ وما الدليل في النص؟",
         element_1_strategy=e1.teaching_strategy or "",
         element_1_time=e1.time_formatted,
         element_1_summary=e1.brief_description or e1.title,
-        activity_1=_activity(1, act_minutes, f"تطبيق {core}", "التزم بالوقت المحدد.", e1.teaching_strategy or ""),
+        activity_1=_activity(1, act_minutes, f"تحليل النص: {first_point}", "استشهد بالمادة المرفوعة ولا تفترض معلومات غير مذكورة.", e1.teaching_strategy or ""),
         element_2_strategy=e2.teaching_strategy or "",
         element_2_time=e2.time_formatted,
         element_2_summary=e2.brief_description or e2.title,
-        activity_2=_activity(2, act_minutes, f"تعميق فهم {core}", "راجع المصدر.", e2.teaching_strategy or ""),
+        activity_2=_activity(2, act_minutes, f"تفسير وتطبيق: {second_point}", "اربط الإجابة بالمثال الوارد في المصدر.", e2.teaching_strategy or ""),
         rubric_group_1_header="المعرفة والفهم",
         rubric_group_1_items=[
-            f"يذكر {core} بدقة",
-            "يربط المفاهيم الجديدة بسابقتها",
+            f"يستخرج فكرة صحيحة من: {first_point}",
+            f"يفسر علاقة المعلومة بالمحتوى: {second_point}",
         ],
         rubric_group_2_header="المهارات والتطبيق",
         rubric_group_2_items=[
-            "يطبق خطوات النشاط بشكل صحيح",
-            "يتعاون مع المجموعة ويعرض النتائج",
+            f"يقدّم مثالاً مستنداً إلى: {second_point}",
+            "يوضح موضع الدليل في النص ويعرض النتيجة",
         ],
         traceability=[
             TraceabilityEntry(
