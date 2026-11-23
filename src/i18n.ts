@@ -5,11 +5,8 @@ export type Lang = 'ar' | 'en';
 export interface Strings {
   tagline: string;
   langToggle: string;
-  passcodeLabel: string;
-  passcodePlaceholder: string;
-  passcodeNote: string;
-  passcodeClear: string;
-  passcodeRejected: string;
+  builtinTemplateName: string;
+  builtinTemplateReady: string;
   generateSingle: string;
   generateMulti: (n: number) => string;
   readinessBoth: string;
@@ -122,12 +119,9 @@ export const STRINGS: Record<Lang, Strings> = {
   en: {
     tagline: 'Smart Lesson Planning, Made Simple.',
     langToggle: 'العربية',
-    passcodeLabel: 'App passcode',
-    passcodePlaceholder: 'Required for uploads and generation',
-    passcodeNote:
-      'Held only in this tab\'s memory until you reload or close it. Never written to browser storage or saved.',
-    passcodeClear: 'Clear',
-    passcodeRejected: 'Passcode missing or incorrect. Re-enter it above and try again.',
+    builtinTemplateName: 'Official template (built in)',
+    builtinTemplateReady:
+      'The official template is built in. Upload a file only to use a different template.',
     generateSingle: 'Generate Lesson Plan',
     generateMulti: (n) => `Generate ${n} Lesson Plans`,
     readinessBoth: 'Upload a curriculum file and a Word template to continue.',
@@ -246,11 +240,8 @@ export const STRINGS: Record<Lang, Strings> = {
   ar: {
     tagline: 'تخطيط الدروس الذكي، ببساطة.',
     langToggle: 'English',
-    passcodeLabel: 'رمز الدخول',
-    passcodePlaceholder: 'مطلوب لرفع الملفات والتوليد',
-    passcodeNote: 'يبقى في ذاكرة هذا التبويب فقط حتى إعادة التحميل أو الإغلاق، ويُرسل مباشرة إلى الخادم عبر اتصال آمن. لا يُكتب في مخزن المتصفح ولا يُحفَظ.',
-    passcodeClear: 'مسح',
-    passcodeRejected: 'رمز الدخول غير صحيح أو مفقود. أعد إدخاله أعلاه ثم حاول مجددًا.',
+    builtinTemplateName: 'القالب الرسمي (مدمج)',
+    builtinTemplateReady: 'القالب الرسمي مدمج تلقائيًا. ارفع ملفًا فقط لو كنت تريد استخدام قالب مختلف.',
     generateSingle: 'توليد خطة الدرس',
     generateMulti: (n) => `توليد ${n} خطط دروس`,
     readinessBoth: 'ارفع ملف المنهج وقالب Word للمتابعة.',
