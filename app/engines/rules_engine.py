@@ -315,9 +315,77 @@ def _grounded_outcomes(lesson: LessonBoundary) -> tuple[List[str], List[Traceabi
         candidates.append((f"{verb} الطالب {target.strip()} كما ورد في الدرس.", match.group(0).strip(' .\n')))
     for match in re.finditer(r"(?:^|[.\n]|\sو)(يشرح|يحدد|يعدد|يصنف|يقارن|يكتب|يطبق|يحلل|يحسب|يرتب|يصمم|يميز|يختار)\s+(?:الطالب|الطلاب)\s+([^.!؟\n]{12,180})", lesson.raw_text):
         candidates.append((f"{match.group(1)} الطالب {match.group(2).strip()}", match.group(0).strip(' .\nو')))
+    # Broader source shapes: numbered definitions, mixed-case terms, a
+    # label followed by a definition on the next line, and explicit categories.
+    # Work from line starts so preceding headings cannot become part of a term.
+    expanded = []
+    lines = lesson.raw_text.splitlines()
+    subject = r"(?:[A-Za-z][A-Za-z()& /-]*?)"
+    for index, raw in enumerate(lines):
+        line = raw.strip().lstrip('•▪ ')
+        line = re.sub(r"^(?:(?:First|Second|Third)\s*:\s*|[0-9]+[) .-]+)", "", line, flags=re.I)
+        window = line
+        # Join only after the relation starts on this line, or after a short
+        # colon-terminated label followed immediately by an explicit definition.
+        relation_on_line = re.search(r"\b(?:is|are|means|refers to|can be classified into)\b", line, re.I)
+        label_then_definition = line.endswith(':') and len(line.split()) <= 7 and index+1 < len(lines) and re.match(r'^[“\"]?(?:Is|is|Are|are)\b', lines[index+1].strip())
+        if not relation_on_line and not label_then_definition:
+            continue
+        window = re.sub(r"\s+", " ", ' '.join([line] + lines[index+1:index+5])).strip()
+        # Keep target and the full predicate as literal evidence, never a
+        # translation or a guessed formula. Colon and quote layouts are common.
+        definition = re.match(
+            r"(" + subject + r")(?:\s*:\s*|\s+)(?:[“\"]?)(?:it\s+)?"
+            r"(is|are|refers to|means|can be classified into|is measured in|are measured in|is composed of|are comprised of)\s+"
+            r"([^.!?]{12,280})(?:[.!?]|$)", window, re.I)
+        if not definition:
+            continue
+        target, relation, description = definition.groups()
+        target = target.strip(' :')
+        if len(target) > 65 or len(target.split()) > 8:
+            continue
+        if target.lower() in ('quantity', 'table', 'example', 'examples', 'this', 'it', 'there', 'they', 'we', 'you', 'what', 'which', 'these quantities'):
+            continue
+        if re.match(r"^(?:if|what|why|how|there|you|we|they|it|this|that|these|those|for example|such|some|then|take|go|head|the following|the previous)\b",target,re.I):
+            continue
+        if re.search(r"lesson|office|page|rights|introduction|structure|procedure|exercise|figure|table|number of|following|previous|\b(?:what|which|when|where|how|then)\b",target,re.I):
+            continue
+        # Reject non-defining statements and imperatives. Definitions begin
+        # with a noun phrase, not a bare adjective or open task instruction.
+        if relation.lower() in ('is','are') and not re.match(r"(?:a |an |the |defined|called|comprised|composed|measured)",description,re.I):
+            continue
+        if 'classified' in relation.lower():
+            outcome=f"يصنف الطالب {target} إلى الفئات المذكورة في الدرس."
+        elif 'measured' in relation.lower() or description.lower().startswith('measured'):
+            outcome=f"يحدد الطالب وحدة قياس {target} المذكورة في الدرس."
+        elif any(w in relation.lower()+' '+description.lower() for w in ['composed of','comprised of']):
+            outcome=f"يعدد الطالب مكونات {target} الواردة في الدرس."
+        else:
+            outcome=f"يشرح الطالب تعريف {target} الوارد في الدرس."
+        expanded.append((outcome, definition.group(0).strip()))
+    # Three-line source table rows: quantity, unit name, unit symbol.
+    # No unit values are supplied by the program.
+    table_rows = []
+    for index, raw in enumerate(lines[:-2]):
+        row = re.fullmatch(r"\s*\d+[)-]\s*([A-Za-z][A-Za-z &-]{1,40})(?:\s*\([^)]*\))?\s*", raw)
+        if not row:
+            continue
+        unit_name, symbol = lines[index+1].strip(), lines[index+2].strip()
+        if not re.fullmatch(r"[A-Za-z]{2,18}",unit_name) or not re.fullmatch(r"[A-Za-z]{1,4}",symbol):
+            continue
+        excerpt = '\n'.join(lines[index:index+3]).strip()
+        table_rows.append((f"يحدد الطالب وحدة قياس {row.group(1).strip()} ورمزها من جدول الدرس: {unit_name} ({symbol}).",excerpt))
+    # Avoid antecedent-free fragments and accidental joins in both grammars.
+    def valid_target(item):
+        outcome = item[0]
+        target = re.sub(r"^.*?(?:تعريف |مكونات |وحدة قياس |عناصر |الفرعين )", "",outcome)
+        if re.match(r"^(?:Quantity\b|Such\b|Then\b|[a-z]\)|meter/|Motion in which\b|Tail\b)",target,re.I):
+            return False
+        return True
+    candidates = [item for item in candidates + expanded if valid_target(item)] + table_rows
     outcomes, evidence, seen = [], [], set()
     for outcome, excerpt in candidates:
-        key = outcome.casefold().rstrip('.')
+        key = re.sub(r'\b(?:the|an?)\s+|\s*\([^)]*\)', '', outcome.casefold()).rstrip('.')
         if key in seen or not _verify_excerpt(excerpt, lesson.raw_text):
             continue
         seen.add(key)
