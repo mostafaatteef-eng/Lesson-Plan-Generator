@@ -57,6 +57,28 @@ def render_docx_to_pdf_libreoffice(docx_bytes: bytes) -> Tuple[bytes, bool]:
         return out_pdf.read_bytes(), True
 
 
+def _global_ssim_percent(generated, reference) -> float:
+    """Global-window structural similarity, measured on matching grayscale pages.
+
+    This is global SSIM (one window), not a sliding-window or perceptual metric.
+    It is only calculated when a reference image of the same shape exists.
+    """
+    import numpy as np
+
+    if generated.shape != reference.shape:
+        return 0.0
+    a = generated.astype(np.float64)
+    b = reference.astype(np.float64)
+    mean_a, mean_b = float(a.mean()), float(b.mean())
+    var_a, var_b = float(a.var()), float(b.var())
+    covariance = float(((a - mean_a) * (b - mean_b)).mean())
+    c1, c2 = (0.01 * 255) ** 2, (0.03 * 255) ** 2
+    score = ((2 * mean_a * mean_b + c1) * (2 * covariance + c2)) / (
+        (mean_a ** 2 + mean_b ** 2 + c1) * (var_a + var_b + c2)
+    )
+    return round(100.0 * max(0.0, min(1.0, score)), 2)
+
+
 def compute_visual_diff(
     generated_pdf_bytes: bytes,
     reference_pdf_bytes: Optional[bytes],
@@ -87,6 +109,7 @@ def compute_visual_diff(
         dim_match = (not extra_page and not missing_page) and abs(gen_w - ref_w) <= 2.0 and abs(gen_h - ref_h) <= 2.0
 
         pixel_diff_pct = 0.0
+        structural_similarity_pct = 0.0
         notes: List[str] = []
 
         if extra_page:
@@ -104,10 +127,14 @@ def compute_visual_diff(
             min_w = min(g_arr.shape[1], r_arr.shape[1])
             diff = np.abs(g_arr[:min_h, :min_w].astype(np.int16) - r_arr[:min_h, :min_w].astype(np.int16))
             pixel_diff_pct = round(float(np.mean(diff > 18) * 100.0), 2)
-            notes.append(f"PyMuPDF + NumPy pixel diff vs Reference PDF: {pixel_diff_pct}%.")
+            structural_similarity_pct = _global_ssim_percent(g_arr, r_arr)
+            notes.append(
+                f"Pixel difference: {pixel_diff_pct}%; global SSIM: "
+                f"{structural_similarity_pct}% against reference."
+            )
         else:
-            pixel_diff_pct = 1.5
-            notes.append("No Reference PDF uploaded; validated against expected page dimensions.")
+            pixel_diff_pct = 0.0
+            notes.append("No Reference PDF uploaded; image comparison unavailable (metrics set to zero, not measured).")
 
         has_overflow = extra_page or (len(overflow_fields) > 0 and pnum in (3, 5))
         status = "fail" if (extra_page or missing_page or not dim_match) else ("warning" if has_overflow else "pass")
@@ -120,7 +147,7 @@ def compute_visual_diff(
                 generated_height_pt=gen_h,
                 dimension_match=dim_match,
                 pixel_diff_pct=pixel_diff_pct,
-                structural_similarity_pct=round(max(0.0, 100.0 - pixel_diff_pct), 2),
+                structural_similarity_pct=structural_similarity_pct,
                 overflow_detected=has_overflow,
                 status=status,  # type: ignore[arg-type]
                 notes=notes,
