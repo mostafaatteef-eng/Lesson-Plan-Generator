@@ -49,7 +49,7 @@ export default function App() {
     lessonDate: '',
     gradeLevel: 'الصف الثاني الثانوي التكنولوجي',
     subject: 'الذكاء الاصطناعي وتحليل البيانات',
-    durationMinutes: 45,
+    durationMinutes: 50,
     outputLanguage: 'auto',
   });
 
@@ -427,7 +427,7 @@ export default function App() {
       job_title: settings?.default_job_title || 'معلم أول الذكاء الاصطناعي وتحليل البيانات',
       program_or_course: advanced.subject.trim() || 'الذكاء الاصطناعي وتحليل البيانات',
       grade_level: advanced.gradeLevel.trim() || 'الصف الثاني الثانوي التكنولوجي',
-      academic_year: settings?.default_academic_year || '٢٠٢٥-٢٠٢٦',
+      academic_year: settings?.default_academic_year || '٢٠٢٦-٢٠٢٧',
       branch: settings?.default_branch || advanced.subject.trim() || 'الذكاء الاصطناعي وتحليل البيانات',
       knowledge_code: settings?.default_knowledge_code || 'TPK04',
       class_sections: advanced.classSection.trim()
@@ -435,7 +435,7 @@ export default function App() {
         : ['2 A', '2B'],
       location: settings?.default_location || 'معمل الذكاء الاصطناعي وتحليل البيانات',
       lesson_date: advanced.lessonDate || new Date().toISOString().slice(0, 10),
-      total_duration_minutes: Math.max(15, Number(advanced.durationMinutes) || 45),
+      total_duration_minutes: Math.max(15, Number(advanced.durationMinutes) || 50),
       output_language: advanced.outputLanguage,
       teacher_instructions: '',
     };
