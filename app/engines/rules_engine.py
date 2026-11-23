@@ -76,21 +76,38 @@ def _clip(text: str, limit: int) -> str:
 
 
 def _pick_excerpts(lesson: LessonBoundary, limit: int = 4) -> List[str]:
+    """Prefer substantive source statements, not section headings or titles."""
+    title_tokens = set(re.findall(r"[A-Za-z\u0621-\u064A]{3,}", lesson.title.lower()))
+
+    def usable(sentence: str) -> bool:
+        value = sentence.strip()
+        words = re.findall(r"[A-Za-z\u0621-\u064A]{2,}", value)
+        if len(words) < 7 or len(value) < 35:
+            return False
+        if re.match(r"^(?:unit|chapter|topic|lesson|الوحدة|الدرس)\s*[^:：]*[:：]", value, re.I):
+            value = re.split(r"[:：]", value, maxsplit=1)[-1].strip()
+            if len(value.split()) < 7:
+                return False
+        if title_tokens and len(set(w.lower() for w in words) - title_tokens) < 4:
+            return False
+        return True
+
     excerpts: List[str] = []
-    for concept in lesson.key_concepts:
-        c = concept.strip()
-        if len(c) >= 6 and _verify_excerpt(c, lesson.raw_text):
-            excerpts.append(c)
+    for sent in _split_sentences(lesson.raw_text):
+        if usable(sent):
+            excerpt = _clip(sent, 150)
+            if excerpt and excerpt not in excerpts:
+                excerpts.append(excerpt)
         if len(excerpts) >= limit:
             break
     if len(excerpts) < limit:
-        for sent in _split_sentences(lesson.raw_text):
-            if sent not in excerpts:
-                excerpts.append(_clip(sent, 140))
+        for concept in lesson.key_concepts:
+            concept = concept.strip()
+            if usable(concept) and _verify_excerpt(concept, lesson.raw_text) and concept not in excerpts:
+                excerpts.append(_clip(concept, 150))
             if len(excerpts) >= limit:
                 break
     return excerpts
-
 
 
 
@@ -254,8 +271,11 @@ def build_rules_lesson_plan(
     # Specific source evidence must be visible in the activities and assessments.
     # Do not claim pedagogical depth that the uploaded material cannot support.
     source_points = [_clip(f"{core}: {e}", 115) for e in excerpts if e.strip()]
-    if not source_points:
-        source_points = [core]
+    if len(source_points) < 2:
+        raise ValueError(
+            "المحتوى المستخرج من الدرس لا يتضمن معلومات كافية لإنتاج أنشطة وتقييمات دقيقة. "
+            "راجع صفحات الدرس أو ارفع نسخة تحتوي على النص التفصيلي؛ لن تُنتج خطة عامة بعنوان الدرس فقط."
+        )
     first_point = source_points[0]
     second_point = source_points[min(1, len(source_points) - 1)]
     third_point = source_points[min(2, len(source_points) - 1)]
