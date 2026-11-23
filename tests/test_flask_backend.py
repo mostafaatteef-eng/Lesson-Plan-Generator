@@ -8,7 +8,8 @@ endpoints, capability downloads, store caps) were removed with the store
 layer they tested; the no-retention guarantee is guarded directly by
 test_no_lesson_data_stores_exist and by artifact assertions on responses.
 
-Covers the security model (passcode gate, rate limiting, secure-by-default),
+Covers the security model (optional passcode gate, failure rate limiting,
+open access by explicit product decision when no passcode is configured),
 upload validation, the honest rules-based fallback generation, QA blocking,
 and the single/multi-lesson response contract.
 Run: pytest tests/test_flask_backend.py
@@ -188,15 +189,93 @@ def test_mutations_require_passcode(client):
         assert r.status_code == 401, path
 
 
-def test_mutations_disabled_without_server_passcode(client, monkeypatch):
+def test_mutations_open_without_server_passcode(client, monkeypatch):
+    # Explicit product decision (2026-11-23): with no APP_PASSCODE the tool
+    # is open access — no credential is required for parse/generate.
     monkeypatch.setattr(fa, "APP_PASSCODE", "")
     r = client.post(
         "/api/curriculum/parse",
         data={"file": (io.BytesIO(TXT), "unit.txt")},
         content_type="multipart/form-data",
+    )
+    assert r.status_code == 200
+
+
+def _generate_without_template(client):
+    unit = _parse_unit(client)
+    body = {
+        "context": {
+            "school_name": "مدرسة ابدأ",
+            "teacher_name": "أ. مصطفى",
+            "job_title": "معلم أول",
+            "program_or_course": "الذكاء الاصطناعي",
+            "grade_level": "الثاني الثانوي",
+            "academic_year": "2025-2026",
+            "branch": "AI",
+            "total_duration_minutes": 45,
+        },
+        "unit": _slim_unit(unit),
+        "lessons": unit["lessons"][:1],
+    }
+    return client.post(
+        "/api/generate",
+        data={"request": json.dumps(body)},
+        content_type="multipart/form-data",
         headers=HEADERS,
     )
-    assert r.status_code == 503
+
+
+def test_builtin_template_fallback(client, monkeypatch, tmp_path):
+    tpl = tmp_path / "builtin.docx"
+    tpl.write_bytes(_sample_docx())
+    monkeypatch.setattr(fa, "DEFAULT_TEMPLATE_PATH", str(tpl))
+    r = client.post(
+        "/api/template/parse", data={}, content_type="multipart/form-data", headers=HEADERS
+    )
+    assert r.status_code == 200
+    health = client.get("/api/health").get_json()
+    assert health["defaults"]["template"] is True
+    assert health["defaults"]["reference_pdf"] is False
+    # Generation without an uploaded template uses the built-in asset.
+    r = _generate_without_template(client)
+    assert r.status_code != 400  # never "Missing template DOCX file."
+
+
+def test_builtin_template_and_reference_fallback(client, monkeypatch, tmp_path):
+    from pypdf import PdfWriter
+
+    tpl = tmp_path / "builtin.docx"
+    tpl.write_bytes(_sample_docx())
+    ref = tmp_path / "ref.pdf"
+    writer = PdfWriter()
+    writer.add_blank_page(612, 792)
+    with ref.open("wb") as fh:
+        writer.write(fh)
+    monkeypatch.setattr(fa, "DEFAULT_TEMPLATE_PATH", str(tpl))
+    monkeypatch.setattr(fa, "DEFAULT_REFERENCE_PDF_PATH", str(ref))
+    # Parse with no uploaded files uses both built-in assets.
+    r = client.post(
+        "/api/template/parse", data={}, content_type="multipart/form-data", headers=HEADERS
+    )
+    assert r.status_code == 200
+    health = client.get("/api/health").get_json()
+    assert health["defaults"]["template"] is True
+    assert health["defaults"]["reference_pdf"] is True
+    r = _generate_without_template(client)
+    assert r.status_code != 400
+
+
+def test_missing_template_without_builtin_is_400(client, monkeypatch):
+    monkeypatch.setattr(fa, "DEFAULT_TEMPLATE_PATH", "")
+    unit = _parse_unit(client)
+    body = {"context": {}, "unit": _slim_unit(unit), "lessons": unit["lessons"][:1]}
+    r = client.post(
+        "/api/generate",
+        data={"request": json.dumps(body)},
+        content_type="multipart/form-data",
+        headers=HEADERS,
+    )
+    assert r.status_code == 400
 
 
 def test_passcode_rate_limited(client):
@@ -301,6 +380,18 @@ def test_generate_fills_recognized_template(client):
         cell.text for table in doc.tables for row in table.rows for cell in row.cells
     )
     assert payload_markers_filled(text)
+
+
+def test_generated_docx_has_neutral_core_properties(client):
+    # Privacy: template docProps (real personal names) must never leak into a
+    # generated plan.
+    unit = _parse_unit(client)
+    r = _generate(client, unit, [unit["lessons"][0]])
+    assert r.status_code == 200
+    doc = Document(io.BytesIO(_b64d(r.get_json()["plan"]["docx_b64"])))
+    cp = doc.core_properties
+    assert cp.author == "EBDA AI Lesson Studio"
+    assert cp.last_modified_by == "EBDA AI Lesson Studio"
 
 
 def payload_markers_filled(text: str) -> bool:
