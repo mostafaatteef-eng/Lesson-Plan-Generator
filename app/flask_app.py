@@ -61,7 +61,7 @@ from pydantic import BaseModel, ValidationError
 from app.engines.ai_engine import generate_lesson_plan
 from app.engines.curriculum_engine import ingest_curriculum, update_boundaries
 from app.engines.render_qa_engine import render_docx_to_pdf_libreoffice, run_four_pillar_qa
-from app.engines.rules_engine import RULES_MODE_LABEL_AR, build_rules_lesson_plan
+from app.engines.rules_engine import RULES_MODE_LABEL_AR, InsufficientCurriculumEvidence, build_rules_lesson_plan
 from app.engines.template_engine import extract_template_schema, inject_lesson_plan_xml_safe
 from app.models.schemas import (
     CurriculumUnit,
@@ -703,6 +703,13 @@ def create_app() -> Flask:
                 plan, failure = _run_generation_scoped(
                     ctx, unit, lesson, schema, template_bytes, ref_bytes
                 )
+            except InsufficientCurriculumEvidence as exc:
+                plan, failure = None, {
+                    "lesson_id": lesson.lesson_id,
+                    "lesson_title": lesson.title,
+                    "detail": str(exc),
+                    "qa_blocked": True,
+                }
             except Exception as exc:
                 plan, failure = None, {
                     "lesson_id": lesson.lesson_id,
