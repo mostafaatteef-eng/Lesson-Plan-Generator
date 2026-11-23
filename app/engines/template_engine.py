@@ -355,6 +355,7 @@ def _normalize_mixed_script_spacing(value: str) -> str:
     This normalization runs on injected values, not the approved template.
     """
     value = value.replace("\u00a0", " ")
+    value = re.sub(r"(?<=[\u0621-\u064A])(?=[A-Za-z])|(?<=[A-Za-z])(?=[\u0621-\u064A])", " ", value)
     value = re.sub(r"(?<=[\u0621-\u064A\u0660-\u0669]) {2,}(?=[A-Za-z0-9])", " ", value)
     value = re.sub(r"(?<=[A-Za-z0-9]) {2,}(?=[\u0621-\u064A\u0660-\u0669])", " ", value)
     return value
@@ -363,6 +364,10 @@ def _normalize_mixed_script_spacing(value: str) -> str:
 def _set_paragraph_text_preserve_format(p_el: etree._Element, text: str) -> None:
     """Modify ONLY <w:t> text inside existing runs so w:pPr, w:rPr, w:bidi, fonts, and colors stay untouched."""
     text = _normalize_mixed_script_spacing(text)
+    # The approved template already supplies a teal numbered-list bullet.
+    # Avoid adding a second black square into the outcome's actual text.
+    if p_el.find(f"{_qn('pPr')}/{_qn('numPr')}") is not None:
+        text = re.sub(r"^\s*[▪•]\s*", "", text)
     needs_rtl = bool(_RTL_TEXT.search(text or ""))
     runs = p_el.findall(_qn("r"))
     if not runs:
@@ -575,6 +580,21 @@ def _apply_sdt_checkboxes(tr, selected):
                 chk = cb.makeelement(f"{{{_W14}}}checked", {})
                 cb.insert(0, chk)
             chk.set(f"{{{_W14}}}val", "1" if want else "0")
+            # Portable checkbox states: do not depend on Wingdings on Linux.
+            for state, code in (("checkedState", "2611"), ("uncheckedState", "2610")):
+                element = cb.find(f"{{{_W14}}}{state}")
+                if element is not None:
+                    element.set(f"{{{_W14}}}val", code)
+                    element.set(f"{{{_W14}}}font", "DejaVu Sans")
+            for run in child.findall(f".//{_qn('r')}"):
+                if any("☐" in (t.text or "") or "☑" in (t.text or "") for t in run.findall(_qn("t"))):
+                    props = run.find(_qn("rPr"))
+                    if props is not None:
+                        font = props.find(_qn("rFonts"))
+                        if font is not None:
+                            for script in ("ascii", "hAnsi", "cs", "eastAsia"):
+                                font.set(_qn(script), "DejaVu Sans")
+
             for t in child.findall(f".//{_qn('t')}"):
                 if t.text and ("☐" in t.text or "☑" in t.text):
                     t.text = t.text.replace("☑", "☐") if not want else t.text.replace("☐", "☑")
@@ -848,6 +868,10 @@ def inject_lesson_plan_xml_safe(
                     continue
 
                 if re.match(r"^الوحدة\s*\(", txt):
+                    for value in tc.findall(f".//{_qn('t')}"):
+                        if value.text:
+                            value.text = re.sub(r"[0-9٠-٩]+", payload.unit_number, value.text)
+
                     nn = _content_tc_after(tcs, c_idx)
                     if nn is not None:
                         write_tc(nn, [payload.unit_name], "الوحدة", 160)

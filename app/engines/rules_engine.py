@@ -272,6 +272,11 @@ def _outcome_phrases(lesson: LessonBoundary, limit: int = 4, budget: int = 55) -
     return phrases[:limit]
 
 
+def _source_unit_number(title: str) -> str:
+    match = re.search(r"(?:unit|الوحدة)\s*[:：]?\s*([0-9٠-٩]+)", title, re.I)
+    return match.group(1) if match else "غير محدد"
+
+
 def build_rules_lesson_plan(
     unit: CurriculumUnit,
     lesson: LessonBoundary,
@@ -359,7 +364,7 @@ def build_rules_lesson_plan(
         school_name=context.school_name,
         grade_level=context.grade_level,
         class_sections=context.class_sections,
-        unit_number="1",
+        unit_number=_source_unit_number(unit.unit_title),
         unit_name=unit.unit_title,
         branch=context.branch,
         knowledge_code=context.knowledge_code,
@@ -423,16 +428,16 @@ def _enrich_data_sourcing(payload: LessonPlanPayload, lesson: LessonBoundary) ->
     if "data sourcing" not in lesson.title.lower() or not all(term in normalized for term in required):
         return payload
     payload.learning_outcomes = [
-        "يصنف الطالب الجداول والصور وJSON إلى بيانات منظمة وغير منظمة وشبه منظمة.",
+        "يصنف الطالب الجداول والصور و JSON إلى بيانات منظمة وغير منظمة وشبه منظمة.",
         "يقارن الطالب بين البيانات الداخلية والمجموعات المفتوحة واستخلاص الويب وفق التكلفة والجودة.",
         "يقترح الطالب إجراءين لحماية خصوصية صور المرضى وتحسين جودة بياناتها، مستندا إلى المنهج.",
-        "يميز الطالب دور BeautifulSoup وScrapy في جمع بيانات الويب، مع ذكر ضرورة الإذن والتنظيف.",
+        "يحدد الطالب وظيفة أدوات جمع بيانات الويب، ويذكر ضرورة الإذن والتنظيف: BeautifulSoup/Scrapy.",
     ]
     payload.warm_up = "توليد بالقواعد للمراجعة. تكييف تدريسي مقترح لـ50دقيقة من صفحات الدرس، لا نقل حرفي لكل أنشطته. من سؤال المنهج: أيهما بيانات غير منظمة، جدول رواتب أم منشورات وتعليقات؟ علل التصنيف."
     payload.element_1_summary = "تصنيف البيانات: جداول منظمة، صور ونصوص غير منظمة، وJSON شبه منظم؛ مقارنة البيانات الداخلية والمفتوحة واستخلاص الويب."
     payload.element_2_summary = "حالة المستشفى من المنهج: جودة صور الأشعة ودقة الوسوم، خصوصية المرضى، وإتاحة عدد كاف من الصور."
     payload.activity_1.purpose = "إنتاج جدول يصنف ثلاثة أمثلة ويقارن ثلاثة مصادر للبيانات."
-    payload.activity_1.teacher_procedures = "يعرض أمثلة الجداول والصور وJSON. يطلب تصنيفها ثم يقارن مصادر البيانات الداخلية والمفتوحة واستخلاص الويب من المنهج."
+    payload.activity_1.teacher_procedures = "يعرض أمثلة الجداول والصور و JSON. يطلب تصنيفها ثم يقارن مصادر البيانات الداخلية والمفتوحة واستخلاص الويب من المنهج."
     payload.activity_1.student_procedures = "يصنف الطالب الأمثلة الثلاثة؛ يسجل ميزة وقيدا لكل مصدر؛ يسلم جدول المقارنة للتصحيح."
     payload.activity_1.student_note = "ورقة عمل مقترحة: مثال / نوع البيانات / السبب. معيار النجاح: ثلاثة تصنيفات صحيحة مع سبب لكل تصنيف."
     payload.activity_2.purpose = "إنتاج خطة جمع بيانات مختصرة لحالة المستشفى الواردة في المنهج."
@@ -441,7 +446,7 @@ def _enrich_data_sourcing(payload: LessonPlanPayload, lesson: LessonBoundary) ->
     payload.activity_2.student_note = "ناتج مقترح: بطاقة قرار من ثلاثة بنود. التقييم: ملاءمة المصدر، دقة الوسوم، وحماية هوية المريض."
     payload.assessment_group_1 = "صنف: جدول رواتب، تعليقات منصة اجتماعية، وملف JSON. اذكر سببا لكل إجابة."
     payload.assessment_group_2 = "لماذا لا تكفي صور أشعة كثيرة منخفضة الجودة؟ اقترح إجراء جودة وإجراء خصوصية لحالة المستشفى."
-    payload.assessment_group_3 = "قارن مصدر بيانات مفتوحا باستخلاص الويب: ميزة وقيد لكل منهما. ما دور BeautifulSoup وScrapy؟"
+    payload.assessment_group_3 = "قارن مصدر بيانات مفتوحا باستخلاص الويب: ميزة وقيد لكل منهما. ما وظيفة أداتي استخلاص الويب BeautifulSoup/Scrapy؟"
     payload.rubric_group_1_items = ["ثلاثة تصنيفات صحيحة مع تعليلها", "ميزة وقيد صحيحان لكل مصدر مقارنة"]
     payload.rubric_group_2_items = ["إجراء جودة وإجراء خصوصية مناسبان لحالة المستشفى", "القرار مدعوم بشاهد محدد من المنهج"]
     summaries = [payload.warm_up, payload.element_1_summary, payload.element_2_summary,

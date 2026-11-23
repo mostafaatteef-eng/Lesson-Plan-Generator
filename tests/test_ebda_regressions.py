@@ -93,3 +93,37 @@ def test_data_sourcing_adaptation_requires_supporting_source():
     lesson.raw_text = 'Data sourcing is important without detailed supporting content.'
     assert _enrich_data_sourcing(unchanged, lesson) is unchanged
     assert not hasattr(unchanged, 'learning_outcomes')
+
+
+def test_source_unit_number_is_not_invented():
+    from app.engines.rules_engine import _source_unit_number
+    assert _source_unit_number('Unit 2') == '2'
+    assert _source_unit_number('الوحدة ٣: البيانات') == '٣'
+    assert _source_unit_number('Learning Python') == 'غير محدد'
+
+
+def test_mixed_script_boundaries_have_spaces():
+    from app.engines.template_engine import _normalize_mixed_script_spacing
+    assert _normalize_mixed_script_spacing('وJSON') == 'و JSON'
+    assert _normalize_mixed_script_spacing('JSONوالصور') == 'JSON والصور'
+
+
+def test_checkbox_uses_portable_visible_states():
+    from lxml import etree
+    from app.engines.template_engine import _apply_sdt_checkboxes, _W14, _qn
+    tr = etree.fromstring('''<w:tr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml"><w:sdt><w:sdtPr><w14:checkbox><w14:checked w14:val="0"/><w14:checkedState w14:val="0052" w14:font="Wingdings 2"/><w14:uncheckedState w14:val="2610" w14:font="MS Gothic"/></w14:checkbox></w:sdtPr><w:sdtContent><w:tc><w:p><w:r><w:rPr><w:rFonts w:ascii="Cairo"/></w:rPr><w:t>☐</w:t></w:r></w:p></w:tc></w:sdtContent></w:sdt><w:tc><w:p><w:r><w:t>تعلم تعاوني</w:t></w:r></w:p></w:tc></w:tr>''')
+    assert _apply_sdt_checkboxes(tr, ['تعلم تعاوني']) == 1
+    state = tr.find(f'.//{{{_W14}}}checkedState')
+    assert state.get(f'{{{_W14}}}val') == '2611'
+    assert state.get(f'{{{_W14}}}font') == 'DejaVu Sans'
+    assert '☑' in ''.join(tr.itertext())
+    assert _apply_sdt_checkboxes(tr, []) == 0
+    assert '☐' in ''.join(tr.itertext())
+
+
+def test_existing_list_does_not_receive_duplicate_square_bullet():
+    from lxml import etree
+    from app.engines.template_engine import _set_paragraph_text_preserve_format
+    p = etree.fromstring('<w:p xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:pPr><w:numPr><w:numId w:val="15"/></w:numPr></w:pPr><w:r><w:t>old</w:t></w:r></w:p>')
+    _set_paragraph_text_preserve_format(p, '▪ يصنف الطالب البيانات')
+    assert ''.join(p.itertext()) == 'يصنف الطالب البيانات'
