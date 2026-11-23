@@ -43,7 +43,10 @@ export interface Strings {
   errGenerate: string;
   errGenerateBatch: string;
   errUnexpected: string;
+  errPayloadTooLarge: string;
+  errQaMissing: string;
   errNetwork: string;
+  noLessonsGenerated: string;
   metaLessons: (n: number) => string;
   metaPages: (n: number) => string;
   metaBaseline: (n: number) => string;
@@ -74,6 +77,9 @@ export interface Strings {
   autoLanguage: string;
   arabic: string;
   english: string;
+  teacherName: string;
+  classSection: string;
+  lessonDate: string;
   grade: string;
   subject: string;
   durationLabel: string;
@@ -91,6 +97,9 @@ export interface Strings {
   qaFail: string;
   qualityLabel: string;
   planReady: string;
+  planNotReady: string;
+  failuresTitle: string;
+  downloadFailed: string;
   morePlans: (n: number) => string;
   lessonsGenerated: (n: number) => string;
   minutesValue: (sum: number, target: number) => string;
@@ -151,7 +160,12 @@ export const STRINGS: Record<Lang, Strings> = {
     errGenerate: 'Lesson plan generation failed.',
     errGenerateBatch: 'Batch lesson plan generation failed.',
     errUnexpected: 'An unexpected error occurred during generation.',
+    errPayloadTooLarge:
+      'The uploaded files are too large for the server. Try fewer lessons or smaller files.',
+    errQaMissing:
+      'The server returned this lesson without its quality report, so it is not shown. Try again.',
     errNetwork: 'Could not reach the server. Check your internet connection and try again.',
+    noLessonsGenerated: 'No lesson could be generated. Review the errors above and try again.',
     metaLessons: (n) => (n === 1 ? '1 lesson' : `${n} lessons`),
     metaPages: (n) => `${n}p`,
     metaBaseline: (n) => `${n}p baseline`,
@@ -181,6 +195,9 @@ export const STRINGS: Record<Lang, Strings> = {
     autoLanguage: 'Auto language',
     arabic: 'Arabic',
     english: 'English',
+    teacherName: 'Teacher name',
+    classSection: 'Class / section',
+    lessonDate: 'Lesson date',
     grade: 'Grade',
     subject: 'Subject',
     durationLabel: 'Lesson duration (minutes)',
@@ -203,6 +220,9 @@ export const STRINGS: Record<Lang, Strings> = {
     qaFail: 'Failed',
     qualityLabel: 'Quality:',
     planReady: 'Your Lesson Plan Is Ready',
+    planNotReady: 'Plan failed quality checks',
+    failuresTitle: 'Lessons that could not be generated',
+    downloadFailed: 'Download failed - try again or regenerate the plan.',
     morePlans: (n) => `(+${n} more)`,
     lessonsGenerated: (n) => (n === 1 ? '1 lesson generated' : `${n} lessons generated`),
     minutesValue: (sum, target) => `${sum}/${target} min`,
@@ -263,7 +283,10 @@ export const STRINGS: Record<Lang, Strings> = {
     errGenerate: 'فشل توليد خطة الدرس.',
     errGenerateBatch: 'فشل توليد خطط الدروس دفعة واحدة.',
     errUnexpected: 'حدث خطأ غير متوقع أثناء التوليد.',
+    errPayloadTooLarge: 'الملفات المرفوعة أكبر من حد الخادم. جرّب دروسًا أقل أو ملفات أصغر.',
+    errQaMissing: 'أعاد الخادم هذا الدرس دون تقرير الجودة، فلم يُعرض. حاول مجددًا.',
     errNetwork: 'تعذّر الوصول إلى الخادم. تحقق من اتصال الإنترنت ثم حاول مجددًا.',
+    noLessonsGenerated: 'تعذّر إنشاء أي درس. راجع الأخطاء أعلاه ثم حاول مجددًا.',
     metaLessons: (n) => (n === 1 ? 'درس واحد' : n === 2 ? 'درسان' : `${n} دروس`),
     metaPages: (n) => `${n} ص`,
     metaBaseline: (n) => `المرجع ${n} ص`,
@@ -293,6 +316,9 @@ export const STRINGS: Record<Lang, Strings> = {
     autoLanguage: 'لغة تلقائية',
     arabic: 'العربية',
     english: 'الإنجليزية',
+    teacherName: 'اسم المعلم',
+    classSection: 'الفصل',
+    lessonDate: 'التاريخ',
     grade: 'الصف الدراسي',
     subject: 'المادة',
     durationLabel: 'مدة الحصة (بالدقائق)',
@@ -315,6 +341,9 @@ export const STRINGS: Record<Lang, Strings> = {
     qaFail: 'فشل',
     qualityLabel: 'الجودة:',
     planReady: 'خطة الدرس جاهزة',
+    planNotReady: 'الخطة لم تجتز فحوصات الجودة',
+    failuresTitle: 'دروس تعذّر إنشاؤها',
+    downloadFailed: 'فشل التنزيل — حاول مرة أخرى أو أعد إنشاء الخطة.',
     morePlans: (n) => `(+${n} أخرى)`,
     lessonsGenerated: (n) => (n === 1 ? 'تم توليد درس واحد' : `تم توليد ${n} دروس`),
     minutesValue: (sum, target) => `${sum}/${target} دقيقة`,
