@@ -137,6 +137,7 @@ def test_questionnaire_adaptation_requires_all_source_evidence():
     assert _enrich_questionnaire(payload,lesson) is payload
     assert len(payload.learning_outcomes)==4
     assert 'المقصف' in payload.learning_outcomes[2]
+    assert 'Google Forms / QuestionPro' in payload.element_2_summary
     assert 'الثبات' in payload.learning_outcomes[3]
     assert 'أربعة' in payload.activity_2.purpose
     assert 'مقترحة' in payload.activity_1.student_note
