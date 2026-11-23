@@ -411,7 +411,7 @@ def build_rules_lesson_plan(
         ],
         missing_curriculum_notes=[RULES_MODE_LABEL_AR],
     )
-    return _enrich_data_sourcing(payload, lesson)
+    return _enrich_questionnaire(_enrich_data_sourcing(payload, lesson), lesson)
 
 
 def _enrich_data_sourcing(payload: LessonPlanPayload, lesson: LessonBoundary) -> LessonPlanPayload:
@@ -464,4 +464,44 @@ def _enrich_data_sourcing(payload: LessonPlanPayload, lesson: LessonBoundary) ->
     payload.missing_curriculum_notes.append(
         "تكييف مقترح للحصة: اختيرت مهارات التصنيف والمقارنة وحالة المستشفى لتناسب50دقيقة؛ ليس تغطية كاملة لكل أنشطة الدرس الأصلي. لا يتضمن جمعا حيا للبيانات أو استخدام خدمات مدفوعة."
     )
+    return payload
+
+
+def _enrich_questionnaire(payload: LessonPlanPayload, lesson: LessonBoundary) -> LessonPlanPayload:
+    """A source-gated questionnaire adaptation, not a general generation claim."""
+    normalized = re.sub(r"\s+", " ", lesson.raw_text).lower()
+    required = ["questionnaire", "target population", "open-ended", "closed-ended",
+                "rating scale", "biased", "validity", "reliability", "cronbach",
+                "google forms", "questionpro", "canteen", "small group"]
+    if not all(term in normalized for term in required):
+        return payload
+    payload.learning_outcomes = [
+        "يرتب الطالب خطوات تصميم الاستبيان من تحديد الهدف إلى المراجعة والتجريب.",
+        "يصنف الطالب الأسئلة إلى مفتوحة ومغلقة واختيار متعدد وتقدير، مع تعليل التصنيف.",
+        "يعيد الطالب صياغة سؤال المقصف المتحيز الوارد في المصدر بصياغة محايدة.",
+        "يميز الطالب الصدق من الثبات ويحدد وظيفة معامل ألفا كرونباخ في فحص الثبات.",
+    ]
+    payload.warm_up = "توليد بالقواعد للمراجعة. تكييف مقترح لـ50 دقيقة. من المصدر: لماذا يتحيز سؤال أليس المقصف ممتازا؟ قارن بسؤال ما مدى رضاك عن المقصف؟"
+    payload.element_1_summary = "الاستبيان لجمع بيانات البحث: تحديد الهدف والفئة، اختيار أنواع الأسئلة، تنظيمها ثم مراجعتها وتجريبها. الصدق يقيس المقصود والثبات اتساق النتائج."
+    payload.element_2_summary = "تصميم استبيان قصير محايد: وضوح اللغة، عدم التكرار، تحديد الوحدات، السرية وتجريب مجموعة صغيرة. أدوات المصدر: Google Forms و QuestionPro."
+    payload.activity_1.purpose = "تصنيف أربعة أسئلة وتحسين سؤال المقصف المتحيز."
+    payload.activity_1.teacher_procedures = "يعرض أنواع أسئلة المصدر ومثال المقصف. يقدم أربعة أسئلة مقترحة: رأي مفتوح، نعم أو لا، اختيار متعدد، ومقياس رضا من واحد إلى خمسة."
+    payload.activity_1.student_procedures = "يصنف الطالب الأسئلة الأربعة ويبرر كل تصنيف؛ يعيد صياغة سؤال المقصف بحياد ويقارن إجابتين مع زميله."
+    payload.activity_1.student_note = "ورقة مقترحة: السؤال / نوعه / مبرر التصنيف. النجاح: أربعة تصنيفات صحيحة وسؤال محايد واضح."
+    payload.activity_2.purpose = "إنتاج مسودة استبيان من أربعة أسئلة لهدف وفئة محددين."
+    payload.activity_2.teacher_procedures = "يقسم الطلاب مجموعات. يطلب هدفا وفئة مستهدفة وأربعة أسئلة؛ يراجع الوضوح والحياد والسرية. يوضح خطوات إنشاء نموذج رقمي دون نشره أو جمع بيانات شخصية."
+    payload.activity_2.student_procedures = "تصمم المجموعة المسودة مع مقدمة وختام. تختار أداة من المصدر وتبررها؛ تتبادل مراجعتها مع مجموعة أخرى وتقترح تجربة صغيرة وتعديلا بعد المراجعة."
+    payload.activity_2.student_note = "ناتج مقترح: مسودة وبطاقة مراجعة للوضوح والحياد والترتيب والسرية. لا حساب مدفوع ولا نشر أو جمع فعلي للبيانات."
+    payload.assessment_group_1 = "رتب: اختيار الأسئلة، تحديد الهدف، التجريب، تحديد الفئة، تنظيم الأسئلة. هل مقياس التقدير مفتوح أم مغلق؟ علل."
+    payload.assessment_group_2 = "حسن سؤال أليس المقصف ممتازا؟ ما الفرق بين الصدق والثبات؟ ما وظيفة ألفا كرونباخ المذكور مع SPSS؟"
+    payload.assessment_group_3 = "راجع مسودة استبيان: حدد سؤالا غامضا أو متحيزا واقترح تعديله وخطة لتجربته على مجموعة صغيرة."
+    payload.rubric_group_1_items = ["ترتيب الخطوات الخمس وتصنيف مقياس التقدير بدقة", "تمييز الصدق والثبات وذكر ألفا كرونباخ لفحص الثبات"]
+    payload.rubric_group_2_items = ["مسودة محايدة واضحة مرتبطة بهدف وفئة محددين", "مراجعة السرية وخطة تجريب وتعديل موثقة"]
+    summaries = [payload.warm_up, payload.element_1_summary, payload.element_2_summary,
+                 payload.assessment_group_1, "بطاقة خروج: اذكر تعديلا يجعل سؤال الاستبيان أوضح وأقل تحيزا."]
+    for element, summary in zip(payload.lesson_elements, summaries):
+        element.brief_description = summary
+    for term in ["target population", "rating scale", "biased", "validity", "reliability", "Cronbach", "Google Forms", "QuestionPro"]:
+        payload.traceability.append(TraceabilityEntry(field_key="learning_outcomes", field_label="دليل تكييف تصميم الاستبيان", supporting_excerpt=term, source_pages=list(range(lesson.start_page, lesson.end_page + 1)), verified_in_source=_verify_excerpt(term, lesson.raw_text)))
+    payload.missing_curriculum_notes.append("تكييف مقترح لخمسين دقيقة: الأسئلة الأربعة وورقة العمل مقترحتان؛ أمثلة المقصف والمفاهيم والأدوات من المصدر. لا تشمل الحصة حساب ألفا كرونباخ أو نشر استبيان حي. تعريف الصدق المستخدم هو قياس الأداة لما صممت لقياسه، لا مساواته بتمثيل العينة للمجتمع.")
     return payload
