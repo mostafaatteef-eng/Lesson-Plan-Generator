@@ -5,6 +5,7 @@ export type {
   AlignmentValidationResult,
   CurriculumUnit,
   GeneratedPlanRecord,
+  GenerationFailure,
   GenerationContext,
   HumanApprovalGate,
   InstitutionSettings,
