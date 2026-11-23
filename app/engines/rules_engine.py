@@ -265,20 +265,73 @@ def _outcome_phrases(lesson: LessonBoundary, limit: int = 4, budget: int = 55) -
             phrases.append(ph)
         if len(phrases) >= limit:
             break
-    # Pad with distinct, complete core-title objectives when the source is thin.
-    pads = [
-        f"يشرح الطالب مفهوم {core}",
-        f"يستعرض الطالب تطبيقات {core}",
-        f"يناقش الطالب أهمية {core}",
-        f"يطبق الطالب خطوات تطبيق {core}",
-    ]
-    for pad in pads:
-        if len(phrases) >= max(2, limit - 1):
-            break
-        if pad not in seen:
-            seen.add(pad)
-            phrases.append(pad)
     return phrases[:limit]
+
+
+def _grounded_outcomes(lesson: LessonBoundary) -> tuple[List[str], List[TraceabilityEntry]]:
+    """Extract observable targets, never pad using a title or generic text task.
+
+    This deliberately bounded fallback supports explicit learner performances,
+    definitions and enumerations. It does not guess a domain's teaching goals.
+    Each target has its own literal source evidence. Unsupported text is refused.
+    """
+    text = re.sub(r"\s+", " ", lesson.raw_text)
+    candidates = []
+    for sentence in re.split(r"[.!؟?\n؛]+|\s+و(?=ي[أ-ي]+\s+(?:الطالب|الطلاب))", lesson.raw_text):
+        outcome = _outcome_from_sentence(sentence, 100)
+        if outcome and re.match(r"^(?:يشرح|يحدد|يعدد|يصنف|يقارن|يكتب|يطبق|يحلل|يحسب|يرتب|يصمم|يميز|يختار|يعرّف) الطالب", outcome):
+            candidates.append((outcome, sentence))
+    # A capitalized noun phrase immediately before an explicit definition.
+    # Preserve the source language of technical terms rather than fake translation.
+    pattern = re.compile(
+        r"\b((?:[Aa]n? |[Tt]he )?[A-Z]?[a-z]+(?: [a-z][a-z-]*){0,7}) "
+        r"(is|are|refers to|means|has|have) ([^.!?]{15,320})(?:[.!?]|$)"
+    )
+    for match in pattern.finditer(text):
+        target, relation, description = match.groups()
+        # The pattern can start inside a running sentence. Require an actual
+        # capitalized subject, then reject pronouns/instructions and fragments.
+        if not target[0].isupper() or len(target) > 70:
+            continue
+        if re.match(r"^(?:In|If|What|How|Why|Describing|It|Its|This|That|These|Those|There|You|We|They|Here|To|For|By|Our)\b", target):
+            continue
+        if re.search(r"lesson|chapter|rights|office|page|book|impact", target, re.I):
+            continue
+        enumeration = relation in ('has', 'have')
+        if enumeration and not re.search(r"elements|types|steps|stages|components", description, re.I):
+            continue
+        if not enumeration and not re.match(r"(?:a |an |the |two |defined|called|another |[0-9])", description):
+            continue
+        if relation == 'are' and not re.search(r"branches|types|defined|called|collection", description, re.I):
+            continue
+        verb = ('يعدد الطالب عناصر' if enumeration else
+                'يصنف الطالب الفرعين' if relation == 'are' and 'branches' in description else
+                'يشرح الطالب تعريف')
+        outcome = f"{verb} {target} الوارد في الدرس."
+        candidates.append((outcome, match.group(0).strip()))
+    for match in re.finditer(r"(?:^|[.\n])\s*([أ-ي][أ-ي \u064b-\u0652]{2,65}?)\s+(هو|هي|تشمل|يتكون من|تتكون من)\s+([^.!؟\n]{15,220})", lesson.raw_text):
+        target, relation, description = match.groups()
+        verb = 'يعدد' if relation in ('تشمل', 'يتكون من', 'تتكون من') else 'يعرّف'
+        candidates.append((f"{verb} الطالب {target.strip()} كما ورد في الدرس.", match.group(0).strip(' .\n')))
+    for match in re.finditer(r"(?:^|[.\n]|\sو)(يشرح|يحدد|يعدد|يصنف|يقارن|يكتب|يطبق|يحلل|يحسب|يرتب|يصمم|يميز|يختار)\s+(?:الطالب|الطلاب)\s+([^.!؟\n]{12,180})", lesson.raw_text):
+        candidates.append((f"{match.group(1)} الطالب {match.group(2).strip()}", match.group(0).strip(' .\nو')))
+    outcomes, evidence, seen = [], [], set()
+    for outcome, excerpt in candidates:
+        key = outcome.casefold().rstrip('.')
+        if key in seen or not _verify_excerpt(excerpt, lesson.raw_text):
+            continue
+        seen.add(key)
+        outcomes.append(outcome)
+        evidence.append(TraceabilityEntry(
+            field_key=f"learning_outcomes.{len(outcomes)-1}",
+            field_label=f"دليل ناتج التعلم {len(outcomes)}",
+            supporting_excerpt=excerpt,
+            source_pages=list(range(lesson.start_page, lesson.end_page + 1)),
+            verified_in_source=True,
+        ))
+        if len(outcomes) == 4:
+            break
+    return outcomes, evidence
 
 
 def _source_unit_number(title: str) -> str:
@@ -294,7 +347,7 @@ def build_rules_lesson_plan(
 ) -> LessonPlanPayload:
     excerpts = _pick_excerpts(lesson)
     core = _core_title(lesson.title)
-    learning_outcomes = _outcome_phrases(lesson) or [f"يشرح الطالب {core}"]
+    learning_outcomes, outcome_evidence = _grounded_outcomes(lesson)
     # Specific source evidence must be visible in the activities and assessments.
     # Do not claim pedagogical depth that the uploaded material cannot support.
     source_points = [e for e in excerpts if e.strip()]
@@ -306,16 +359,6 @@ def build_rules_lesson_plan(
     first_point = source_points[0]
     second_point = source_points[min(1, len(source_points) - 1)]
     third_point = source_points[min(2, len(source_points) - 1)]
-    # Replace stock outcomes (which merely restate the heading) with
-    # measurable objectives anchored in actual lesson statements.
-    specific_outcomes = [
-        "يستخرج الطالب معلومتين من مقتطفي المصدر ويحدد موضع الدليل.",
-        "يفسر الطالب كل معلومة بكلماته دون تغيير معناها.",
-    ]
-    specific_outcomes.append("يقارن الطالب بين المعلومتين السابقتين ويذكر من النص وجه ارتباطهما أو اختلافهما.")
-
-    genuine_outcomes = [item for item in learning_outcomes if core not in item]
-    learning_outcomes = list(dict.fromkeys((genuine_outcomes + specific_outcomes)))[:4]
 
     total = max(15, context.total_duration_minutes)
     elements = normalize_element_durations(
@@ -408,19 +451,15 @@ def build_rules_lesson_plan(
             "تفسير المقتطف الثاني مرتبط بالنص دون إضافة غير موثقة",
             "يوضح موضع الدليل في النص ويعرض النتيجة",
         ],
-        traceability=[
-            TraceabilityEntry(
-                field_key="learning_outcomes",
-                field_label="نواتج التعلم",
-                supporting_excerpt=ex,
-                source_pages=list(range(lesson.start_page, lesson.end_page + 1)),
-                verified_in_source=_verify_excerpt(ex, lesson.raw_text),
-            )
-            for ex in excerpts[:3]
-        ],
+        traceability=outcome_evidence,
         missing_curriculum_notes=[RULES_MODE_LABEL_AR],
     )
     payload = _enrich_questionnaire(_enrich_data_sourcing(payload, lesson), lesson)
+    if len(payload.learning_outcomes) < 3:
+        raise InsufficientCurriculumEvidence(
+            "لا يكفي النص لصياغة ثلاثة نواتج تعلم محددة مرتبطة بالدرس في الوضع القواعدي. "
+            "ارفع محتوى يوضح المفاهيم أو المهارات المطلوبة؛ لن تضاف نواتج عامة لاستكمال العدد."
+        )
     # Visible in the printable plan, not just response metadata or web UI.
     payload.warm_up = "مسودة بالقواعد؛ مقترحات لاعتماد المعلم. " + payload.warm_up
     if not any("تكييف مقترح" in n for n in payload.missing_curriculum_notes):
