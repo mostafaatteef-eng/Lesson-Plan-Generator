@@ -185,8 +185,19 @@ def detect_lesson_boundaries(pages: List[PageText], fallback_title: str) -> Tupl
             ))
         return unit_title, sessions, warnings
 
+    # Contents pages list several lesson titles but contain no lesson body.
+    # Exclude dense header lists, not short lessons on otherwise normal pages.
+    contents_pages = set()
+    for pg in pages:
+        lines = [line.strip() for line in pg.text.splitlines() if line.strip()]
+        headers = [line for line in lines if any(p.match(line) for p in LESSON_HEADER_PATTERNS)]
+        if len(headers) >= 3 and (re.search(r"\b(?:contents|lesson\s+page)\b|فهرس", pg.text, re.I)
+                                  or len(pg.text.split()) < 250):
+            contents_pages.add(pg.page_number)
     flat_lines: List[Tuple[int, str, bool]] = []
     for pg in pages:
+        if pg.page_number in contents_pages:
+            continue
         for raw_line in pg.text.splitlines():
             clean = raw_line.strip()
             is_lesson_header = bool(clean and len(clean) <= 160 and any(p.match(clean) for p in LESSON_HEADER_PATTERNS))
@@ -225,12 +236,25 @@ def detect_lesson_boundaries(pages: List[PageText], fallback_title: str) -> Tupl
         start_page = chunk[0][0]
         end_page = chunk[-1][0]
         title = chunk[0][1].strip()
+        # Header-only lines take the following short non-footer line as title.
+        number_match = re.fullmatch(r"(?:Lesson|Topic|Session|Module)\s+(\d+)", title, re.I)
+        if number_match:
+            following = next((line.strip() for _, line, _ in chunk[1:] if line.strip()), "")
+            if 3 <= len(following) <= 100 and not re.search(r"Page \d+ of", following, re.I):
+                title += ": " + following
+        # The leading running header on the next opening page is not content
+        # of this lesson. Page-based editing must not include the next lesson.
+        if idx + 1 < len(hit_indices):
+            next_page = flat_lines[hit_indices[idx + 1]][0]
+            if next_page > start_page and next_page == end_page:
+                end_page = next_page - 1
+                raw_text = "\n".join(line for page_no, line, _ in chunk if page_no <= end_page).strip()
         word_count = len(raw_text.split())
         is_short = word_count < 30
         lessons.append(
             LessonBoundary(
                 lesson_id=f"lsn_{uuid.uuid4().hex[:8]}",
-                lesson_number=idx + 1,
+                lesson_number=int(number_match.group(1)) if number_match else idx + 1,
                 title=title,
                 start_page=start_page,
                 end_page=end_page,
