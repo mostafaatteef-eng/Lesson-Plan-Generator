@@ -289,6 +289,7 @@ def build_rules_lesson_plan(
         f"يستخرج الطالب معلومة صحيحة من النص: {_clip(excerpts[0], 75)}",
         f"يفسر الطالب المعلومة الواردة: {_clip(excerpts[1], 75)}",
     ]
+    specific_outcomes.append("يقارن الطالب بين المعلومتين السابقتين ويذكر من النص وجه ارتباطهما أو اختلافهما.")
     if len(excerpts) > 2:
         specific_outcomes.append(f"يطبق الطالب معلومة من الدرس بمثال: {_clip(excerpts[2], 75)}")
     genuine_outcomes = [item for item in learning_outcomes if core not in item]
