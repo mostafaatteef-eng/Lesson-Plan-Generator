@@ -267,6 +267,20 @@ def ingest_curriculum(file_bytes: bytes, filename: str) -> CurriculumUnit:
 
     full_text = "\n".join(p.text for p in pages)
     unit_title, lessons, boundary_warnings = detect_lesson_boundaries(pages, filename)
+    # Slide decks commonly put LESSON n inside grade metadata, not as a
+    # stand-alone header. Accept a single explicit cover marker only when no
+    # later slide introduces another lesson; otherwise preserve human review.
+    if fmt == "pptx" and lessons and lessons[0].is_ambiguous:
+        cover = [line.strip() for line in pages[0].text.splitlines() if line.strip()]
+        marker = re.search(r"\bLESSON\s+(\d+)\b", pages[0].text, re.I)
+        later_markers = any(re.search(r"\bLESSON\s+\d+\b", pg.text, re.I) for pg in pages[1:])
+        titles = [line for line in cover if not re.search(r"\b(?:grade|lesson|ms[.]?|mr[.]?)\b", line, re.I)]
+        if marker and not later_markers and len(titles) >= 2 and sum(len(pg.text.split()) for pg in pages) >= 80:
+            unit_title = titles[0]
+            lesson_title = " - ".join(titles[:2])
+            raw = "\n\n".join(pg.text for pg in pages)
+            lessons = [LessonBoundary(lesson_id=f"lsn_{uuid.uuid4().hex[:8]}", lesson_number=int(marker.group(1)), title=lesson_title, start_page=1, end_page=len(pages), raw_text=raw, word_count=len(raw.split()), confidence=0.94, approved=True, key_concepts=extract_key_concepts(raw))]
+            boundary_warnings = []
     return CurriculumUnit(
         unit_id=f"unit_{uuid.uuid4().hex[:8]}",
         filename=filename,
