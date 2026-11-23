@@ -359,7 +359,7 @@ def test_practice_names_each_verified_concept_and_maps_every_field():
         assert all(e.verified_in_source for e in p.traceability)
         assert all(' '.join(e.supporting_excerpt.split()) in ' '.join(source.split()) for e in p.traceability)
         assert 'مقتطف' not in p.assessment_group_1 + p.assessment_group_2
-        assert 'مهمة مقترحة' in p.activity_1.purpose
+        assert 'بطاقة مقترحة' in p.activity_1.purpose
         plans.append(p)
     assert 'Measurement' in plans[0].assessment_group_1
     assert 'algorithm' in plans[1].assessment_group_1
