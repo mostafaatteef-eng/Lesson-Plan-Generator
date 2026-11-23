@@ -412,9 +412,8 @@ export default function App() {
     // Stages 0 ("Reading curriculum") & 1 ("Identifying lessons") are already verified from upload
     setActiveStageIndex(2);
 
-    const stageTimer = window.setInterval(() => {
-      setActiveStageIndex((prev) => (prev < 5 ? prev + 1 : prev));
-    }, 2400);
+    // The backend returns a single response and does not stream stage events.
+    // Keep the generation step active rather than displaying fabricated progress.
 
     const baseContext: Omit<GenerationContext, 'lesson_id'> = {
       unit_id: unit.unit_id,
@@ -498,7 +497,6 @@ export default function App() {
     } catch (err) {
       setGenerationError(netMessage(err, t.errUnexpected));
     } finally {
-      window.clearInterval(stageTimer);
       setIsGenerating(false);
     }
   };
