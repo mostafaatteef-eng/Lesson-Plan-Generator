@@ -46,3 +46,31 @@ def test_teacher_class_date_are_always_visible_and_required():
     assert "Boolean(advanced.classSection.trim())" in app
     assert "teacher_name: advanced.teacherName.trim()" in app
     assert "['2 A', '2B']" not in app
+
+
+def test_session_openings_ignore_contents_running_headers_and_topics():
+    from app.engines.curriculum_engine import detect_lesson_boundaries
+    from app.models.schemas import PageText
+    pages = [
+        PageText(page_number=1, text="Unit 2\nSessions\nSession 1: Data Sourcing\nSession 2: Annotation"),
+        PageText(page_number=2, text="77\nSession 1\nData Sourcing for AI\nLearning Objectives\nIdentify data sources and compare their quality."),
+        PageText(page_number=3, text="1\nSession\nTopic 1: Data Sourcing\nSource details and examples."),
+        PageText(page_number=4, text="Learning Objectives\nDefine annotation.\nSession 2\nA Deep Dive into Data Annotation"),
+        PageText(page_number=5, text="2\nSession\nTopic 1: Annotation\nAnnotation examples."),
+    ]
+    _, lessons, _ = detect_lesson_boundaries(pages, "source.pdf")
+    assert [(x.start_page, x.end_page) for x in lessons] == [(2, 3), (4, 5)]
+    assert "Data Sourcing" in lessons[0].title
+    assert "Source details" in lessons[0].raw_text
+    assert "Annotation examples" not in lessons[0].raw_text
+
+
+def test_wrapped_english_fact_is_complete_not_a_fragment():
+    from app.engines.rules_engine import _pick_excerpts
+    from app.models.schemas import LessonBoundary
+    lesson = LessonBoundary(lesson_id='x', lesson_number=1, title='Data Sourcing', start_page=1, end_page=1,
+        raw_text='Topic 1: Data Sourcing in AI\nDefinition\nThe process of collecting and aggregating data from various sources to be used in\nAI and machine learning models.\nData Importance:\nData is the lifeblood of AI and machine learning models.', word_count=50, confidence=1)
+    points = _pick_excerpts(lesson)
+    assert any(x.endswith('AI and machine learning models') for x in points)
+    assert not any(x.endswith('used in') for x in points)
+    assert not any('Learning Objectives' in x for x in points)

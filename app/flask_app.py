@@ -639,6 +639,24 @@ def create_app() -> Flask:
         body, err = _parse_body(ScopedGenerateBody, parsed)
         if err:
             return err
+        # Validate actual caller input before schema defaults can invent identity.
+        identity_errors = []
+        if not str(body.context.get("teacher_name") or "").strip():
+            identity_errors.append("أدخل اسم المعلم.")
+        sections = body.context.get("class_sections")
+        if not isinstance(sections, list) or not sections or any(
+            not isinstance(section, str) or not section.strip() for section in sections
+        ):
+            identity_errors.append("حدد الفصل أو الفصول المطلوبة.")
+        lesson_date = body.context.get("lesson_date")
+        try:
+            if not isinstance(lesson_date, str) or len(lesson_date) != 10:
+                raise ValueError("date required")
+            datetime.strptime(lesson_date, "%Y-%m-%d")
+        except ValueError:
+            identity_errors.append("اختر تاريخ حصة صحيحًا.")
+        if identity_errors:
+            return _err(422, " ".join(identity_errors))
         if not body.lessons:
             return _err(400, "Select at least one lesson.")
         if len(body.lessons) > MAX_BATCH_LESSONS:
@@ -729,7 +747,7 @@ def create_app() -> Flask:
                 plan, failure = None, {
                     "lesson_id": lesson.lesson_id,
                     "lesson_title": lesson.title,
-                    "detail": f"تعذّر توليد هذا الدرس: {exc}",
+                    "detail": "تعذّر توليد هذا الدرس. إذا كان وضع AI مفعّلًا، تحقق من اتصال الخدمة وإعداداتها ثم أعد المحاولة. لم تُنتج ملفات غير متحققة.",
                 }
             if failure:
                 failures.append(failure)

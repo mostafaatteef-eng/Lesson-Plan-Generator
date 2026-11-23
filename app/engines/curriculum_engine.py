@@ -153,6 +153,38 @@ def detect_lesson_boundaries(pages: List[PageText], fallback_title: str) -> Tupl
                 unit_title = clean
                 break
 
+    # Designed session books put an overview list before the actual session
+    # openings and repeat Session in running headers. Prefer opening pages
+    # carrying Learning Objectives, not the table of contents or Topic rows.
+    session_starts = []
+    for pg in pages:
+        lines = [line.strip() for line in pg.text.splitlines() if line.strip()]
+        if "Learning Objectives" not in lines:
+            continue
+        for pos, line in enumerate(lines):
+            match = re.fullmatch(r"Session\s+(\d+)", line, re.I)
+            if match:
+                title_lines = []
+                for value in lines[pos + 1:pos + 4]:
+                    if value == "Learning Objectives" or value.isdigit():
+                        break
+                    title_lines.append(value)
+                title = line + (": " + " ".join(title_lines) if title_lines else "")
+                session_starts.append((pg.page_number, int(match.group(1)), title))
+                break
+    if len(session_starts) >= 2 and len({x[1] for x in session_starts}) == len(session_starts):
+        sessions = []
+        for idx, (start, number, title) in enumerate(session_starts):
+            end = session_starts[idx + 1][0] - 1 if idx + 1 < len(session_starts) else pages[-1].page_number
+            raw = "\n\n".join(pg.text for pg in pages if start <= pg.page_number <= end)
+            sessions.append(LessonBoundary(
+                lesson_id=f"lsn_{uuid.uuid4().hex[:8]}", lesson_number=number,
+                title=title, start_page=start, end_page=end, raw_text=raw,
+                word_count=len(raw.split()), confidence=0.96,
+                key_concepts=extract_key_concepts(raw),
+            ))
+        return unit_title, sessions, warnings
+
     flat_lines: List[Tuple[int, str, bool]] = []
     for pg in pages:
         for raw_line in pg.text.splitlines():

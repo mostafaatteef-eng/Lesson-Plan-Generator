@@ -245,13 +245,10 @@ def run_four_pillar_qa(
         and injection_metrics.get("cells_before") == injection_metrics.get("cells_after")
         and bool(injection_metrics.get("widths_unchanged"))
     )
-    # Page-count policy: exact match expected; ONE extra page is tolerated as a
-    # warning (approved product policy for fully filled fixed-layout forms;
-    # geometry and content stay untouched). Fewer pages than expected still
-    # means lost content and stays blocking.
+    # Exact page count is required. Never hide overflow or accept an extra page.
     pages_exact = rendered_pages == expected_pages
     trailing_blank = rendered_pages > expected_pages and trailing_page_is_footer_only(rendered_pdf_bytes)
-    pages_ok = expected_pages <= rendered_pages <= expected_pages + 1 and not trailing_blank
+    pages_ok = rendered_pages == expected_pages and not trailing_blank
     p3 = _build_pillar(
         "template_fidelity",
         "Template Fidelity",
@@ -266,7 +263,7 @@ def run_four_pillar_qa(
                 name="RTL w:bidi & Page Count Guard",
                 passed=bool(injection_metrics.get("bidi_preserved")) and pages_ok and len(overflow_list) == 0,
                 severity="error" if not pages_ok else ("warning" if (overflow_list or not pages_exact) else "info"),
-                detail=f"Pages {rendered_pages}/{expected_pages} (tolerance +1), overflow cells={len(overflow_list)}.",
+                detail=f"Pages {rendered_pages}/{expected_pages} (exact match required), overflow cells={len(overflow_list)}.",
             ),
         ],
     )
