@@ -693,6 +693,7 @@ def test_rules_fallback_activities_refer_to_uploaded_python_lesson(client):
     schema_data = _parse_template(client)
     schema = TemplateSchema(**schema_data)
     context = GenerationContext(
+        unit_id=parsed_unit.unit_id, lesson_id=lesson.lesson_id, template_id=schema.template_id,
         school_name="مدرسة ابدأ", teacher_name="معلم اختبار",
         job_title="معلم", program_or_course="Python",
         grade_level="الصف الأول", academic_year="2026-2027",
