@@ -72,7 +72,7 @@ def generate_lesson_plan(
     if not api_key:
         raise RuntimeError("OPENAI_API_KEY environment variable is required for Python AI engine.")
 
-    client = OpenAI(api_key=api_key)
+    client = OpenAI(api_key=api_key, timeout=35.0, max_retries=0)
     model_name = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
     lang_label = "English" if schema.language == "en" else "Arabic (Modern Standard Arabic)"
 
@@ -130,7 +130,7 @@ def regenerate_fields(
     if not api_key:
         raise RuntimeError("OPENAI_API_KEY environment variable is required.")
 
-    client = OpenAI(api_key=api_key)
+    client = OpenAI(api_key=api_key, timeout=35.0, max_retries=0)
     model_name = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
     prompt = (
