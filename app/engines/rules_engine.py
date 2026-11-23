@@ -253,7 +253,7 @@ def build_rules_lesson_plan(
     learning_outcomes = _outcome_phrases(lesson) or [f"يشرح الطالب {core}"]
     # Specific source evidence must be visible in the activities and assessments.
     # Do not claim pedagogical depth that the uploaded material cannot support.
-    source_points = [_clip(e, 115) for e in excerpts if e.strip()]
+    source_points = [_clip(f"{core}: {e}", 115) for e in excerpts if e.strip()]
     if not source_points:
         source_points = [core]
     first_point = source_points[0]
