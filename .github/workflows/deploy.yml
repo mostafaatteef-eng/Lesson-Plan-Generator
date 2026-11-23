@@ -31,7 +31,7 @@ jobs:
       - name: Install PDF rendering prerequisite
         run: sudo apt-get update && sudo apt-get install -y libreoffice-writer
       - run: pip install -r requirements.txt
-      - run: python -m pytest -q tests/test_pipeline.py tests/test_flask_backend.py tests/test_ebda_regressions.py
+      - run: python -m pytest -q tests/test_pipeline.py tests/test_flask_backend.py tests/test_ebda_regressions.py tests/test_pdf_fidelity.py
   build:
     needs: validate
     runs-on: ubuntu-latest
