@@ -334,3 +334,53 @@ def test_wider_outcomes_never_join_an_unrelated_heading_to_a_target():
         'Measuring length using the micrometer\nA micrometer is an instrument used for measuring small lengths.\n'))
     outcomes,_ = _grounded_outcomes(lesson)
     assert outcomes == ['يشرح الطالب تعريف A micrometer الوارد في الدرس.']
+
+
+def test_practice_names_each_verified_concept_and_maps_every_field():
+    from types import SimpleNamespace
+    from app.engines.rules_engine import _grounded_practice, _grounded_outcomes, InsufficientCurriculumEvidence
+    import pytest
+    sources = [
+        'Measurement is the process of comparing a quantity with its unit.\nThe fundamental unit of length is defined to be one meter.\nThe fundamental unit of mass is defined as one kilogram.',
+        'An algorithm is a set of instructions for a computer to perform a task.\nA data set is a collection of data points used for analysis.\nNatural language processing is a branch of AI that enables computers to understand language.',
+    ]
+    plans = []
+    for source in sources:
+        lesson = SimpleNamespace(raw_text=source,start_page=2,end_page=3,key_concepts=[],title='Lesson')
+        outcomes, evidence = _grounded_outcomes(lesson)
+        payload = SimpleNamespace(learning_outcomes=outcomes,traceability=evidence,
+            activity_1=SimpleNamespace(),activity_2=SimpleNamespace(),
+            lesson_elements=[SimpleNamespace() for _ in range(5)],missing_curriculum_notes=[])
+        p = _grounded_practice(payload,lesson)
+        fields = {'warm_up','assessment_group_1','assessment_group_2','assessment_group_3','element_1_summary','element_2_summary'}
+        fields |= {f'activity_{n}.{f}' for n in [1,2] for f in ['purpose','teacher_procedures','student_procedures','student_note']}
+        fields |= {f'lesson_elements.{i}.brief_description' for i in range(5)}
+        assert fields <= {e.field_key for e in p.traceability}
+        assert all(e.verified_in_source for e in p.traceability)
+        assert all(' '.join(e.supporting_excerpt.split()) in ' '.join(source.split()) for e in p.traceability)
+        assert 'مقتطف' not in p.assessment_group_1 + p.assessment_group_2
+        assert 'مهمة مقترحة' in p.activity_1.purpose
+        plans.append(p)
+    assert 'Measurement' in plans[0].assessment_group_1
+    assert 'algorithm' in plans[1].assessment_group_1
+    assert 'Measurement' not in plans[1].activity_1.teacher_procedures
+    # Evidence that does not occur in this lesson cannot authorize a task.
+    lesson.raw_text = 'Unrelated lesson without supported statements.'
+    with pytest.raises(InsufficientCurriculumEvidence):
+        _grounded_practice(plans[1],lesson)
+
+
+def test_practice_uses_literal_table_targets_and_component_questions():
+    from types import SimpleNamespace
+    from app.engines.rules_engine import _grounded_practice, _grounded_outcomes
+    source = ('First: Fundamental (basic) Physical Quantity is the physical quantity that cannot be defined in terms of other quantities.\n'
+              'Calipers are comprised of two jaws attached to fixed and sliding scales.\n'
+              '1- Mass (m)\nkilogram\nkg\n2- Length (l)\nmeter\nm\n')
+    lesson = SimpleNamespace(raw_text=source,start_page=1,end_page=1,key_concepts=[],title='Lesson')
+    outcomes,evidence = _grounded_outcomes(lesson)
+    p = SimpleNamespace(learning_outcomes=outcomes,traceability=evidence,activity_1=SimpleNamespace(),activity_2=SimpleNamespace(),lesson_elements=[SimpleNamespace() for _ in range(5)],missing_curriculum_notes=[])
+    p = _grounded_practice(p,lesson)
+    assert 'مكونات Calipers' in p.assessment_group_1
+    assert 'وحدة قياس Mass' in p.assessment_group_2
+    assert 'وحدة قياس Length' in p.assessment_group_2
+    assert any(e.field_key=='assessment_group_2' and 'kilogram' in e.supporting_excerpt for e in p.traceability)
