@@ -83,7 +83,12 @@ def generate_lesson_plan(
         f"1. Use observable Bloom taxonomy action verbs. NEVER use vague verbs (يفهم، يعرف، يدرك، understand, know).\n"
         f"2. Provide exactly 5 lesson_elements whose duration_minutes sum EXACTLY to {context.total_duration_minutes}.\n"
         f"3. Never invent textbook exercises or curriculum facts; list gaps in missing_curriculum_notes.\n"
-        f"4. Attach verbatim supporting_excerpt strings copied directly from the source lesson with source_pages."
+        f"4. Attach verbatim supporting_excerpt strings copied directly from the source lesson with source_pages.\n"
+        f"5. Avoid generic activities. Each activity must quote or clearly reference a specific concept, fact, code example or exercise found in SOURCE LESSON TEXT.\n"
+        f"6. Provide specific teacher_procedures, student_procedures, measurable assessment items, and misconceptions supported by the source; do not invent examples that contradict or extend the source.\n"
+        f"7. Keep all fields concise enough for a compact four-page form; avoid lengthy paragraphs and repetitive padding.\n"
+        f"8. Preserve literal programming syntax and English technical terms accurately, with natural Arabic spacing; do not add unusual spaces inside words or code.\n"
+        f"9. Match learning outcomes to specific activities and assessment questions. If information is absent, state the gap and do not fabricate it."
     )
 
     user_prompt = (

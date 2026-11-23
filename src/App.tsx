@@ -28,9 +28,11 @@ export default function App() {
   const [settings, setSettings] = useState<InstitutionSettings | null>(null);
   const [backendState, setBackendState] = useState<'checking' | 'online' | 'offline'>('checking');
   const [backendVersion, setBackendVersion] = useState<string | null>(null);
+  const [generationMode, setGenerationMode] = useState<'ai' | 'rules_fallback' | null>(null);
 
   // Section B — Upload state (3 independent cards)
   const [unit, setUnit] = useState<CurriculumUnit | null>(null);
+  const [curriculumFileSize, setCurriculumFileSize] = useState<number | null>(null);
   const [curriculumError, setCurriculumError] = useState<string | null>(null);
   const [uploadingCurriculum, setUploadingCurriculum] = useState(false);
 
@@ -151,6 +153,7 @@ export default function App() {
         }
         setBackendState('online');
         setBackendVersion(typeof health.version === 'string' ? health.version : null);
+        setGenerationMode(health.generation?.mode === 'ai' ? 'ai' : 'rules_fallback');
         setServerDefaults({
           template: Boolean(health.defaults?.template),
           reference_pdf: Boolean(health.defaults?.reference_pdf),
@@ -223,6 +226,7 @@ export default function App() {
       }
       const parsedUnit = data as CurriculumUnit;
       setUnit(parsedUnit);
+      setCurriculumFileSize(file.size);
       setSelectedLessonIds(parsedUnit.lessons.length > 0 ? [parsedUnit.lessons[0].lesson_id] : []);
       setGeneratedPlans([]);
       setBatchDownload(null);
@@ -238,6 +242,7 @@ export default function App() {
     // Server is request-scoped: removal is purely local state cleanup.
     if (!unit) return;
     setUnit(null);
+    setCurriculumFileSize(null);
     setSelectedLessonIds([]);
     setGeneratedPlans([]);
     setGenerationFailures([]);
@@ -588,7 +593,7 @@ export default function App() {
   const curriculumSummary: UploadedFileSummary | null = unit
     ? {
         name: unit.filename,
-        sizeBytes: unit.file_size_bytes,
+        sizeBytes: curriculumFileSize,
         metaLine: `${t.metaLessons(unit.lessons.length)} · ${t.metaPages(unit.total_pages)}`,
       }
     : null;
@@ -684,9 +689,16 @@ export default function App() {
           <section aria-label="Document uploads" className="space-y-3">
             <p className="text-[12px] text-[#53716B]" role="note">
               {lang === 'ar'
-                ? 'احفظ نموذج Word ومرجع PDF مرة واحدة على هذا الجهاز؛ سيُستخدمان تلقائيًا في الزيارات التالية. يُرفع المنهج الجديد فقط.'
-                : 'Choose the Word template and reference PDF once on this device. They will load automatically next time; only the curriculum changes.'}
+                ? 'نموذج Word ومرجع PDF الرسميان متاحان تلقائيًا عند اتصال الخادم. ارفع المنهج واختر الدرس.'
+                : 'The official Word and PDF templates load from the server when available. Upload a curriculum and choose a lesson.'}
             </p>
+            {backendState === 'online' && (
+              <p role="status" className="text-[12px] text-[#53716B]">
+                {generationMode === 'ai'
+                  ? (lang === 'ar' ? 'الذكاء الاصطناعي مفعل على الخادم' : 'AI generation is enabled')
+                  : (lang === 'ar' ? 'وضع التوليد بالقواعد: المحتوى يحتاج مراجعة المعلم' : 'Rules-based mode: teacher review is required')}
+              </p>
+            )}
             {template && (
               <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-[#EAF4F0] px-4 py-3">
                 <span className="text-[13px] font-medium text-[#116962]">

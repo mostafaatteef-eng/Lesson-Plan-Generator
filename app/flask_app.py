@@ -481,6 +481,11 @@ def create_app() -> Flask:
             "status": "ok",
             "version": VERSION,
             "service": "ebda-lesson-studio-backend",
+            # Configuration only: never expose the API key, provider response or costs.
+            "generation": {
+                "mode": "ai" if bool(os.getenv("OPENAI_API_KEY")) and os.getenv("ENABLE_AI_GENERATION") == "1" else "rules_fallback",
+                "ai_enabled": bool(os.getenv("OPENAI_API_KEY")) and os.getenv("ENABLE_AI_GENERATION") == "1",
+            },
             "defaults": {
                 "template": _default_asset(DEFAULT_TEMPLATE_PATH) is not None,
                 "reference_pdf": _default_asset(DEFAULT_REFERENCE_PDF_PATH) is not None,

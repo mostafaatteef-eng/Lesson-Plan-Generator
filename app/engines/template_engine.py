@@ -348,8 +348,21 @@ def _ensure_run_rtl(r: etree._Element) -> None:
         rtl.set(_qn("val"), "1")
 
 
+def _normalize_mixed_script_spacing(value: str) -> str:
+    """Remove accidental multi-space gaps at Arabic/Latin script boundaries.
+
+    Preserve single meaningful spaces and all punctuation/code characters.
+    This normalization runs on injected values, not the approved template.
+    """
+    value = value.replace("\u00a0", " ")
+    value = re.sub(r"(?<=[\u0621-\u064A\u0660-\u0669]) {2,}(?=[A-Za-z0-9])", " ", value)
+    value = re.sub(r"(?<=[A-Za-z0-9]) {2,}(?=[\u0621-\u064A\u0660-\u0669])", " ", value)
+    return value
+
+
 def _set_paragraph_text_preserve_format(p_el: etree._Element, text: str) -> None:
     """Modify ONLY <w:t> text inside existing runs so w:pPr, w:rPr, w:bidi, fonts, and colors stay untouched."""
+    text = _normalize_mixed_script_spacing(text)
     needs_rtl = bool(_RTL_TEXT.search(text or ""))
     runs = p_el.findall(_qn("r"))
     if not runs:
