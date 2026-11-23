@@ -353,6 +353,9 @@ def _run_generation_scoped(
     # spend permission. ENABLE_AI_GENERATION=1 must also be set server-side
     # after the user approves AI cost/scope. Default is the honest,
     # clearly-labeled rules fallback grounded in the uploaded source.
+    if ctx.output_language == "en":
+        return None, {"lesson_id": lesson.lesson_id, "lesson_title": lesson.title,
+            "detail": "English lesson-plan output is not supported by the current Arabic template. Interface language does not translate the plan. Choose Arabic or match-template for an Arabic draft with original source excerpts. No translation or AI service was activated."}
     if os.getenv("OPENAI_API_KEY") and os.getenv("ENABLE_AI_GENERATION") == "1":
         payload: LessonPlanPayload = generate_lesson_plan(unit, lesson, schema, ctx)
         generation_mode = "ai"
