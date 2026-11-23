@@ -97,9 +97,18 @@ def _pick_excerpts(lesson: LessonBoundary, limit: int = 4) -> List[str]:
         return True
 
     excerpts: List[str] = []
-    for sent in _split_sentences(lesson.raw_text):
-        if usable(sent):
-            excerpt = _clip(sent, 150)
+    # Session opening objectives and viewing instructions are not lesson facts.
+    text = lesson.raw_text
+    topic = re.search(r"Topic\s+1\s*[:：]", text, re.I)
+    if topic:
+        text = text[topic.end():]
+    text = re.sub(r"(?<=\w)-\s*\n(?=\w)", "", text)
+    text = re.sub(r"(?m)^.*(?:Definition|Data Importance:|Data Sourcing in AI)\s*$", "", text)
+    text = re.sub(r"(?m)^\s*[•▪]\s*", "", text)
+    text = re.sub(r"\s*\n\s*", " ", text)
+    for sent in _split_sentences(text):
+        if usable(sent) and len(sent.strip()) <= (220 if re.search(r"[\u0621-\u064a]", sent) else 140):
+            excerpt = sent.strip().lstrip("•▪ ")
             if excerpt and excerpt not in excerpts:
                 excerpts.append(excerpt)
         if len(excerpts) >= limit:
@@ -274,7 +283,7 @@ def build_rules_lesson_plan(
     learning_outcomes = _outcome_phrases(lesson) or [f"يشرح الطالب {core}"]
     # Specific source evidence must be visible in the activities and assessments.
     # Do not claim pedagogical depth that the uploaded material cannot support.
-    source_points = [_clip(f"{core}: {e}", 115) for e in excerpts if e.strip()]
+    source_points = [e for e in excerpts if e.strip()]
     if len(source_points) < 2:
         raise InsufficientCurriculumEvidence(
             "المحتوى المستخرج من الدرس لا يتضمن معلومات كافية لإنتاج أنشطة وتقييمات دقيقة. "
@@ -286,12 +295,11 @@ def build_rules_lesson_plan(
     # Replace stock outcomes (which merely restate the heading) with
     # measurable objectives anchored in actual lesson statements.
     specific_outcomes = [
-        f"يستخرج الطالب معلومة صحيحة من النص: {_clip(excerpts[0], 75)}",
-        f"يفسر الطالب المعلومة الواردة: {_clip(excerpts[1], 75)}",
+        f"يستخرج الطالب معلومة صحيحة من النص: {excerpts[0]}",
+        f"يفسر الطالب المعلومة الواردة: {excerpts[1]}",
     ]
     specific_outcomes.append("يقارن الطالب بين المعلومتين السابقتين ويذكر من النص وجه ارتباطهما أو اختلافهما.")
-    if len(excerpts) > 2:
-        specific_outcomes.append(f"يطبق الطالب معلومة من الدرس بمثال: {_clip(excerpts[2], 75)}")
+
     genuine_outcomes = [item for item in learning_outcomes if core not in item]
     learning_outcomes = list(dict.fromkeys((genuine_outcomes + specific_outcomes)))[:4]
 
@@ -330,12 +338,12 @@ def build_rules_lesson_plan(
             activity_type="دراسة حالة" if num == 1 else "بحث",
             purpose=purpose,
             teacher_procedures=(
-                f"يعرض المعلم مقتطف المنهج: «{first_point if num == 1 else second_point}» ثم يطلب تفسير الفكرة بدليل من النص، ويصحح الإجابات."
+                f"يعرض مقتطف المنهج: «{first_point if num == 1 else second_point}». يطلب تفسيرًا وشاهدًا، ويصحح الإجابات."
             ),
             student_procedures=(
-                (f"تحدد كل مجموعة فكرة من «{first_point if num == 1 else second_point}» وتشرحها بمثال من المادة، ثم تعرض دليلها."
+                (f"تفسر المجموعة: «{first_point if num == 1 else second_point}» وتعرض شاهدها من المصدر."
                  if cooperative
-                 else f"يستخرج الطالب معلومة من «{first_point if num == 1 else second_point}» ويشرحها ويذكر شاهدها من الدرس.")
+                 else f"يفسر الطالب: «{first_point if num == 1 else second_point}» ويحدد شاهدها.")
             ),
             student_note=note,
         )
