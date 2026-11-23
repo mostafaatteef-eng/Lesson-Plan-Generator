@@ -393,7 +393,7 @@ def source_cards(lesson):
             'ما غرض كتابة الرسالة الإنجليزية النموذجية؟', 'يذكر تقديم AI Ibdaa Dashboard بوصفه منتج الرسالة')
         add([r'1\. Data Visualization:.*?2\. Predictive Analytics:.*?3\. Customization Options:.*?4\. Real-time Updates:'],
             'Advertised features', 'يستخرج الطالب خصائص اللوحة الأربع كما تعرضها الرسالة.',
-            'سم بالإنجليزية الخصائص الأربع التي تعلنها الرسالة، دون اعتبارها حقائق منتج تم التحقق منه.', 'يسمي Data Visualization وPredictive Analytics وCustomization Options وReal-time Updates')
+            'سم بالإنجليزية الخصائص الأربع التي تعلنها الرسالة.', 'يسمي التصور البياني والتحليلات التنبؤية والتخصيص والتحديثات الفورية كخصائص معلنة بالنص')
         add([r'we would like to offer you a personalized demo where we can walk you through its features'],
             'Call to action', 'يحدد الطالب الدعوة إلى الإجراء في نموذج الرسالة.',
             'ما الإجراء الذي تدعو الرسالة المتلقي إليه؟', 'يحدد عرضا توضيحيا مخصصا للمنتج')
