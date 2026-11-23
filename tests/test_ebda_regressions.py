@@ -165,7 +165,7 @@ def test_pptx_explicit_cover_metadata_is_single_lesson_not_ambiguous():
     assert unit.unit_title=='DATA ANALYSIS'
     assert len(unit.lessons)==1
     lesson=unit.lessons[0]
-    assert lesson.title=='DATA ANALYSIS - Questionnaire Design'
+    assert lesson.title=='Lesson 3: DATA ANALYSIS - Questionnaire Design'
     assert lesson.lesson_number==3
     assert (lesson.start_page,lesson.end_page)==(1,3)
     assert lesson.approved and not lesson.is_ambiguous
@@ -173,3 +173,10 @@ def test_pptx_explicit_cover_metadata_is_single_lesson_not_ambiguous():
     buf=io.BytesIO();prs.save(buf)
     multi=ingest_curriculum(buf.getvalue(),'source.pptx')
     assert multi.lessons[0].title!='DATA ANALYSIS - Questionnaire Design'
+
+
+def test_official_lesson_badge_never_hardcodes_first_lesson():
+    source=(Path(__file__).resolve().parents[1]/'app'/'engines'/'template_engine.py').read_text()
+    assert 'number = match_number.group(1) if match_number else "غير محدد"' in source
+    assert 'f"الدرس ({number})"' in source
+    assert '["الدرس (١)"]' not in source
