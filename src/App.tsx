@@ -35,6 +35,7 @@ export default function App() {
   const [uploadingCurriculum, setUploadingCurriculum] = useState(false);
 
   const [template, setTemplate] = useState<TemplateSchema | null>(null);
+  const [showTemplateSettings, setShowTemplateSettings] = useState(false);
   const [templateSizeBytes, setTemplateSizeBytes] = useState<number>(0);
   const [templateError, setTemplateError] = useState<string | null>(null);
   const [uploadingTemplate, setUploadingTemplate] = useState(false);
@@ -686,7 +687,22 @@ export default function App() {
                 ? 'احفظ نموذج Word ومرجع PDF مرة واحدة على هذا الجهاز؛ سيُستخدمان تلقائيًا في الزيارات التالية. يُرفع المنهج الجديد فقط.'
                 : 'Choose the Word template and reference PDF once on this device. They will load automatically next time; only the curriculum changes.'}
             </p>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-stretch">
+            {template && (
+              <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-[#EAF4F0] px-4 py-3">
+                <span className="text-[13px] font-medium text-[#116962]">
+                  {lang === 'ar'
+                    ? '✓ نموذج التحضير جاهز — ارفع المنهج فقط'
+                    : '✓ Lesson plan template ready — upload the curriculum only'}
+                </span>
+                <button type="button" onClick={() => setShowTemplateSettings((v) => !v)}
+                  className="text-[12px] font-semibold text-[#116962] underline underline-offset-2">
+                  {lang === 'ar'
+                    ? showTemplateSettings ? 'إخفاء إعدادات النموذج' : 'تغيير النموذج أو المرجع'
+                    : showTemplateSettings ? 'Hide template settings' : 'Change template or reference'}
+                </button>
+              </div>
+            )}
+            <div className={`grid grid-cols-1 ${!template || showTemplateSettings ? 'md:grid-cols-3' : ''} gap-4 items-stretch`}>
               <UploadCard
                 id="upload-curriculum"
                 title={t.curriculumTitle}
@@ -706,6 +722,7 @@ export default function App() {
                 t={t}
               />
 
+              {(!template || showTemplateSettings) && (<>
               <UploadCard
                 id="upload-template"
                 title={t.templateTitle}
@@ -743,6 +760,7 @@ export default function App() {
                 onValidationError={setRefPdfError}
                 t={t}
               />
+              </>)}
             </div>
           </section>
 
