@@ -53,7 +53,7 @@ export default function App() {
   const [advanced, setAdvanced] = useState<AdvancedOptions>({
     teacherName: '',
     classSection: '',
-    lessonDate: '',
+    lessonDate: new Date().toLocaleDateString('en-CA'),
     gradeLevel: 'الصف الثاني الثانوي التكنولوجي',
     subject: 'الذكاء الاصطناعي وتحليل البيانات',
     durationMinutes: 50,
@@ -191,7 +191,7 @@ export default function App() {
         setSettings(data);
         setAdvanced((prev) => ({
           ...prev,
-          teacherName: data.default_teacher_name || prev.teacherName,
+          teacherName: prev.teacherName,
           gradeLevel: data.default_grade_level || prev.gradeLevel,
           subject: data.specialization_ar || prev.subject,
           durationMinutes: data.default_duration_minutes || prev.durationMinutes,
@@ -482,6 +482,10 @@ export default function App() {
 
   // Generate Single or Multi-Lesson Plans
   const handleGenerate = async () => {
+    if (!advanced.teacherName.trim() || !advanced.classSection.trim() || !/^\d{4}-\d{2}-\d{2}$/.test(advanced.lessonDate)) {
+      setGenerationError('يجب إدخال اسم المعلم والفصل وتاريخ الحصة بصورة صحيحة قبل التوليد.');
+      return;
+    }
     if (
       !unit ||
       !template ||
@@ -505,21 +509,16 @@ export default function App() {
       unit_id: unit.unit_id,
       template_id: template.template_id,
       school_name: settings?.school_name_ar || 'مدرسة ابدأ الوطنية للعلوم التقنية — بدر',
-      teacher_name:
-        advanced.teacherName.trim() ||
-        settings?.default_teacher_name ||
-        'معلم التكنولوجيا التطبيقية',
+      teacher_name: advanced.teacherName.trim(),
       job_title: settings?.default_job_title || 'معلم أول الذكاء الاصطناعي وتحليل البيانات',
       program_or_course: advanced.subject.trim() || 'الذكاء الاصطناعي وتحليل البيانات',
       grade_level: advanced.gradeLevel.trim() || 'الصف الثاني الثانوي التكنولوجي',
       academic_year: settings?.default_academic_year || '٢٠٢٦-٢٠٢٧',
       branch: settings?.default_branch || advanced.subject.trim() || 'الذكاء الاصطناعي وتحليل البيانات',
       knowledge_code: settings?.default_knowledge_code || 'TPK04',
-      class_sections: advanced.classSection.trim()
-        ? advanced.classSection.split(/[،,]/).map((s) => s.trim()).filter(Boolean)
-        : ['2 A', '2B'],
+      class_sections: advanced.classSection.split(/[،,]/).map((s) => s.trim()).filter(Boolean),
       location: settings?.default_location || 'معمل الذكاء الاصطناعي وتحليل البيانات',
-      lesson_date: advanced.lessonDate || new Date().toISOString().slice(0, 10),
+      lesson_date: advanced.lessonDate,
       total_duration_minutes: Math.max(15, Number(advanced.durationMinutes) || 50),
       output_language: advanced.outputLanguage,
       teacher_instructions: '',
@@ -624,6 +623,9 @@ export default function App() {
     Boolean(unit) &&
     Boolean(template) &&
     selectedLessonIds.length > 0 &&
+    Boolean(advanced.teacherName.trim()) &&
+    Boolean(advanced.classSection.trim()) &&
+    /^\d{4}-\d{2}-\d{2}$/.test(advanced.lessonDate) &&
     !uploadingCurriculum &&
     !uploadingTemplate &&
     !uploadingRefPdf &&
@@ -637,7 +639,9 @@ export default function App() {
         ? t.readinessTemplate
         : selectedLessonIds.length === 0
           ? t.readinessLessons
-          : null;
+          : !advanced.teacherName.trim() || !advanced.classSection.trim() || !/^\d{4}-\d{2}-\d{2}$/.test(advanced.lessonDate)
+            ? 'أدخل اسم المعلم والفصل وتاريخ الحصة قبل توليد الخطة.'
+            : null;
 
   return (
     <div className={`min-h-screen bg-[#F8FAF9] text-[#17252C] ${lang === 'ar' ? 'font-arabic' : ''}`}>

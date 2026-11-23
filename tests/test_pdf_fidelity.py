@@ -49,3 +49,28 @@ def test_legacy_pdf_conversion_failure_is_not_replaced(monkeypatch):
     monkeypatch.setattr(legacy, "render_docx_to_pdf_libreoffice", failure)
     with pytest.raises(FileNotFoundError, match="LibreOffice"):
         legacy._render_pdf_with_fallback(b"not-a-docx", None)
+
+
+def test_footer_only_fifth_page_is_detected():
+    from app.engines.render_qa_engine import trailing_page_is_footer_only
+    doc = fitz.open()
+    for i in range(4):
+        page = doc.new_page(width=595, height=842)
+        page.insert_text((40, 110), f"Lesson content page {i + 1}")
+    last = doc.new_page(width=595, height=842)
+    last.insert_text((40, 820), "5 of 5 - copyright")
+    data = doc.tobytes()
+    doc.close()
+    assert trailing_page_is_footer_only(data)
+
+
+def test_real_content_on_fifth_page_is_not_footer_only():
+    from app.engines.render_qa_engine import trailing_page_is_footer_only
+    doc = fitz.open()
+    for _ in range(4):
+        doc.new_page(width=595, height=842)
+    last = doc.new_page(width=595, height=842)
+    last.insert_text((40, 110), "Actual assessment questions")
+    data = doc.tobytes()
+    doc.close()
+    assert not trailing_page_is_footer_only(data)

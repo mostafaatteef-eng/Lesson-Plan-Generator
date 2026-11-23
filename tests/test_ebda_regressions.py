@@ -32,3 +32,17 @@ def test_frontend_school_defaults_and_progress_are_not_regressed():
     assert "Number(advanced.durationMinutes) || 50" in source
     # A timer must not falsely claim the backend advanced its processing stage.
     assert "setInterval(() =>" not in source or "setActiveStageIndex((prev)" not in source
+
+
+def test_teacher_class_date_are_always_visible_and_required():
+    root = Path(__file__).resolve().parents[1]
+    selector = (root / "src" / "components" / "LessonSelector.tsx").read_text(encoding="utf-8")
+    app = (root / "src" / "App.tsx").read_text(encoding="utf-8")
+    identity_block = selector.split("Required lesson identity")[1].split("Minimal Advanced Settings")[0]
+    for field_id in ("ebda-teacher-name", "ebda-class-section", "ebda-lesson-date"):
+        assert field_id in identity_block
+    assert 'type="date"' in identity_block
+    assert "Boolean(advanced.teacherName.trim())" in app
+    assert "Boolean(advanced.classSection.trim())" in app
+    assert "teacher_name: advanced.teacherName.trim()" in app
+    assert "['2 A', '2B']" not in app
