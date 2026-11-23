@@ -283,6 +283,16 @@ def build_rules_lesson_plan(
     first_point = source_points[0]
     second_point = source_points[min(1, len(source_points) - 1)]
     third_point = source_points[min(2, len(source_points) - 1)]
+    # Replace stock outcomes (which merely restate the heading) with
+    # measurable objectives anchored in actual lesson statements.
+    specific_outcomes = [
+        f"يستخرج الطالب معلومة صحيحة من النص: {_clip(excerpts[0], 75)}",
+        f"يفسر الطالب المعلومة الواردة: {_clip(excerpts[1], 75)}",
+    ]
+    if len(excerpts) > 2:
+        specific_outcomes.append(f"يطبق الطالب معلومة من الدرس بمثال: {_clip(excerpts[2], 75)}")
+    genuine_outcomes = [item for item in learning_outcomes if core not in item]
+    learning_outcomes = list(dict.fromkeys((genuine_outcomes + specific_outcomes)))[:4]
 
     total = max(15, context.total_duration_minutes)
     elements = normalize_element_durations(
