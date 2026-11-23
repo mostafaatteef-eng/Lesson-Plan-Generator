@@ -144,7 +144,7 @@ def _split_txt_pages(text: str) -> List[PageText]:
 
 def detect_lesson_boundaries(pages: List[PageText], fallback_title: str) -> Tuple[str, List[LessonBoundary], List[str]]:
     warnings: List[str] = []
-    unit_title = Path(fallback_title).stem
+    unit_title = "غير محددة في المصدر"
 
     for pg in pages[:2]:
         for line in pg.text.splitlines():
