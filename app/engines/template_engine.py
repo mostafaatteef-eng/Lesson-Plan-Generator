@@ -1091,6 +1091,37 @@ def inject_lesson_plan_xml_safe(
             _set_para_lines(bp, payload.element_2_summary.splitlines())
             injected_count += 1
 
+    # Keep Arabic choice words intact in the official narrow grouping cells.
+    # Do not change grid widths, labels or artwork.
+    for tc in body.findall(f".//{_qn('tc')}"):
+        text = "".join(t.text or "" for t in tc.findall(f".//{_qn('t')}"))
+        if "جماعي" in text and len(text.strip()) < 30:
+            props = tc.find(_qn("tcPr"))
+            if props is not None and props.find(_qn("noWrap")) is None:
+                props.append(props.makeelement(_qn("noWrap"), {}))
+            for run in tc.findall(f".//{_qn('r')}"):
+                rp = run.find(_qn("rPr"))
+                if rp is None:
+                    rp = run.makeelement(_qn("rPr"), {})
+                    run.insert(0, rp)
+                for tag in ("sz", "szCs"):
+                    size = rp.find(_qn(tag))
+                    if size is None:
+                        size = rp.makeelement(_qn(tag), {})
+                        rp.append(size)
+                    size.set(_qn("val"), "18")
+    # Heading and strategy row belong with their following element summary.
+    for table in body.findall(_qn("tbl")):
+        text = "".join(t.text or "" for t in table.findall(f".//{_qn('t')}"))
+        if re.search(r"ثانيا.*العنصر", text):
+            for para in table.findall(f".//{_qn('p')}"):
+                pp = para.find(_qn("pPr"))
+                if pp is None:
+                    pp = para.makeelement(_qn("pPr"), {})
+                    para.insert(0, pp)
+                if pp.find(_qn("keepNext")) is None:
+                    pp.append(pp.makeelement(_qn("keepNext"), {}))
+
     tables_after = len(body.findall(f".//{_qn('tbl')}"))
     cells_after = len(body.findall(f".//{_qn('tc')}"))
     bidi_after = len(body.findall(f".//{_qn('bidi')}")) + len(body.findall(f".//{_qn('bidiVisual')}"))

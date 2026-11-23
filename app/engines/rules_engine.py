@@ -406,4 +406,57 @@ def build_rules_lesson_plan(
         ],
         missing_curriculum_notes=[RULES_MODE_LABEL_AR],
     )
+    return _enrich_data_sourcing(payload, lesson)
+
+
+def _enrich_data_sourcing(payload: LessonPlanPayload, lesson: LessonBoundary) -> LessonPlanPayload:
+    """A bounded curriculum pattern, activated only when its supporting text exists.
+
+    The hospital scenario and tools are from the uploaded source. The 50-minute
+    selection and worksheet are teacher-review adaptations, not source quotes.
+    No network collection or paid service is performed by this plan.
+    """
+    normalized = re.sub(r"\s+", " ", lesson.raw_text).lower()
+    required = ["structured data", "unstructured data", "semi-structured data",
+                "publicly available datasets", "web scraping", "beautifulsoup", "scrapy",
+                "hospital", "medical images", "privacy", "bias"]
+    if "data sourcing" not in lesson.title.lower() or not all(term in normalized for term in required):
+        return payload
+    payload.learning_outcomes = [
+        "يصنف الطالب الجداول والصور وJSON إلى بيانات منظمة وغير منظمة وشبه منظمة.",
+        "يقارن الطالب بين البيانات الداخلية والمجموعات المفتوحة واستخلاص الويب وفق التكلفة والجودة.",
+        "يقترح الطالب إجراءين لحماية خصوصية صور المرضى وتحسين جودة بياناتها، مستندا إلى المنهج.",
+        "يميز الطالب دور BeautifulSoup وScrapy في جمع بيانات الويب، مع ذكر ضرورة الإذن والتنظيف.",
+    ]
+    payload.warm_up = "من سؤال المنهج: أيهما بيانات غير منظمة، جدول رواتب أم منشورات وتعليقات؟ علل التصنيف."
+    payload.element_1_summary = "تصنيف البيانات: جداول منظمة، صور ونصوص غير منظمة، وJSON شبه منظم؛ مقارنة البيانات الداخلية والمفتوحة واستخلاص الويب."
+    payload.element_2_summary = "حالة المستشفى من المنهج: جودة صور الأشعة ودقة الوسوم، خصوصية المرضى، وإتاحة عدد كاف من الصور."
+    payload.activity_1.purpose = "إنتاج جدول يصنف ثلاثة أمثلة ويقارن ثلاثة مصادر للبيانات."
+    payload.activity_1.teacher_procedures = "يعرض أمثلة الجداول والصور وJSON. يطلب تصنيفها ثم يقارن مصادر البيانات الداخلية والمفتوحة واستخلاص الويب من المنهج."
+    payload.activity_1.student_procedures = "يصنف الطالب الأمثلة الثلاثة؛ يسجل ميزة وقيدا لكل مصدر؛ يسلم جدول المقارنة للتصحيح."
+    payload.activity_1.student_note = "ورقة عمل مقترحة: مثال / نوع البيانات / السبب. معيار النجاح: ثلاثة تصنيفات صحيحة مع سبب لكل تصنيف."
+    payload.activity_2.purpose = "إنتاج خطة جمع بيانات مختصرة لحالة المستشفى الواردة في المنهج."
+    payload.activity_2.teacher_procedures = "يقسم الطلاب مجموعات ويعرض حالة صور الأشعة. يطلب تحديد مشكلة جودة ومشكلة خصوصية، ثم يراجع الحلول بمقارنة أدلتها من النص."
+    payload.activity_2.student_procedures = "تحدد المجموعة مصدر الصور وشرط الجودة وإجراء حماية؛ تعرض قرارها مع شاهد من المنهج، وتراجع اقتراح مجموعة أخرى."
+    payload.activity_2.student_note = "ناتج مقترح: بطاقة قرار من ثلاثة بنود. التقييم: ملاءمة المصدر، دقة الوسوم، وحماية هوية المريض."
+    payload.assessment_group_1 = "صنف: جدول رواتب، تعليقات منصة اجتماعية، وملف JSON. اذكر سببا لكل إجابة."
+    payload.assessment_group_2 = "لماذا لا تكفي صور أشعة كثيرة منخفضة الجودة؟ اقترح إجراء جودة وإجراء خصوصية لحالة المستشفى."
+    payload.assessment_group_3 = "قارن مصدر بيانات مفتوحا باستخلاص الويب: ميزة وقيد لكل منهما. ما دور BeautifulSoup وScrapy؟"
+    payload.rubric_group_1_items = ["ثلاثة تصنيفات صحيحة مع تعليلها", "ميزة وقيد صحيحان لكل مصدر مقارنة"]
+    payload.rubric_group_2_items = ["إجراء جودة وإجراء خصوصية مناسبان لحالة المستشفى", "القرار مدعوم بشاهد محدد من المنهج"]
+    summaries = [payload.warm_up, payload.element_1_summary, payload.element_2_summary,
+                 payload.assessment_group_1, "بطاقة خروج: اختر مصدر بيانات وعلل اختيارك بميزة وقيد من النص."]
+    for element, summary in zip(payload.lesson_elements, summaries):
+        element.brief_description = summary
+    evidence_terms = ["Structured Data", "Unstructured Data", "Semi-structured Data", "BeautifulSoup", "Scrapy", "hospital"]
+    payload.traceability.extend(
+        TraceabilityEntry(field_key="activity_2" if term == "hospital" else "learning_outcomes",
+                          field_label="دليل تكييف درس مصادر البيانات", supporting_excerpt=term,
+                          source_pages=list(range(lesson.start_page, lesson.end_page + 1)),
+                          verified_in_source=_verify_excerpt(term, lesson.raw_text))
+        for term in evidence_terms
+    )
+    payload.missing_curriculum_notes.append(
+        "تكييف مقترح للحصة: اختيرت مهارات التصنيف والمقارنة وحالة المستشفى لتناسب50دقيقة؛ ليس تغطية كاملة لكل أنشطة الدرس الأصلي. لا يتضمن جمعا حيا للبيانات أو استخدام خدمات مدفوعة."
+    )
     return payload

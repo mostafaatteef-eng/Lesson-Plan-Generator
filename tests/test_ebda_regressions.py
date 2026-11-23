@@ -74,3 +74,22 @@ def test_wrapped_english_fact_is_complete_not_a_fragment():
     assert any(x.endswith('AI and machine learning models') for x in points)
     assert not any(x.endswith('used in') for x in points)
     assert not any('Learning Objectives' in x for x in points)
+
+
+def test_data_sourcing_adaptation_requires_supporting_source():
+    from app.engines.rules_engine import _enrich_data_sourcing
+    from types import SimpleNamespace
+    lesson = SimpleNamespace(title='Data Sourcing for AI', raw_text='Structured Data Unstructured Data Semi-structured Data Publicly Available Datasets Web Scraping BeautifulSoup Scrapy hospital medical images privacy bias', start_page=2, end_page=12)
+    activity = lambda: SimpleNamespace()
+    payload = SimpleNamespace(activity_1=activity(), activity_2=activity(), lesson_elements=[SimpleNamespace() for _ in range(5)], missing_curriculum_notes=[], traceability=[])
+    assert _enrich_data_sourcing(payload, lesson) is payload
+    assert len(payload.learning_outcomes) == 4
+    assert 'JSON' in payload.learning_outcomes[0]
+    assert 'المستشفى' in payload.assessment_group_2
+    assert 'ثلاثة' in payload.activity_1.student_procedures
+    assert len(payload.traceability) == 6
+    assert all(e.verified_in_source for e in payload.traceability)
+    unchanged = SimpleNamespace()
+    lesson.raw_text = 'Data sourcing is important without detailed supporting content.'
+    assert _enrich_data_sourcing(unchanged, lesson) is unchanged
+    assert not hasattr(unchanged, 'learning_outcomes')
