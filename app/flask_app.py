@@ -709,6 +709,21 @@ def create_app() -> Flask:
                     "lesson_title": lesson.title,
                     "detail": str(exc),
                     "qa_blocked": True,
+                    "blocking_gates": [{
+                        "gate_id": "gate_source_depth",
+                        "category": "curriculum_fidelity",
+                        "severity": "blocking",
+                        "message": str(exc),
+                    }],
+                    "qa_report": {
+                        "overall_status": "fail",
+                        "approval_gates": [{
+                            "gate_id": "gate_source_depth",
+                            "category": "curriculum_fidelity",
+                            "severity": "blocking",
+                            "message": str(exc),
+                        }],
+                    },
                 }
             except Exception as exc:
                 plan, failure = None, {
