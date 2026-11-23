@@ -705,9 +705,9 @@ def test_rules_fallback_activities_refer_to_uploaded_python_lesson(client):
     )
     plan = build_rules_lesson_plan(parsed_unit, lesson, schema, context)
     source = lesson.raw_text
-    assert any(term in plan.activity_1.teacher_procedures for term in ("المتغير", "البيانات", "يختار"))
-    assert "مقتطف المنهج" in plan.activity_1.teacher_procedures
-    assert "سؤال:" in plan.assessment_group_1
+    assert any(term in plan.element_1_summary for term in ("المتغير", "البيانات", "يختار"))
+    assert "مقتطف المصدر" in plan.activity_1.teacher_procedures
+    assert "مقتطف الأول" in plan.assessment_group_1
     assert plan.assessment_group_1 != "ملاحظة أداء الطلاب أثناء نشاط الدرس"
     assert sum(e.duration_minutes for e in plan.lesson_elements) == 50
     assert plan.teacher_name == "معلم اختبار"
@@ -743,3 +743,12 @@ def test_identity_values_survive_generation_unchanged(client):
     assert payload["class_sections"] == ["2A", "2B"]
     assert payload["lesson_date"] == "2026-11-24"
     assert 3 <= len(payload["learning_outcomes"]) <= 5
+
+
+def test_english_output_is_honestly_refused_without_artifact(client):
+    unit = _parse_unit(client)
+    response = _generate(client,unit,unit["lessons"][:1],context_overrides={"output_language":"en"})
+    assert response.status_code == 422
+    result=response.get_json()
+    assert "English lesson-plan output is not supported" in result["detail"]
+    assert "plan" not in result and "docx_b64" not in result

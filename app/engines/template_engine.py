@@ -362,40 +362,44 @@ def _normalize_mixed_script_spacing(value: str) -> str:
 
 
 def _set_paragraph_text_preserve_format(p_el: etree._Element, text: str) -> None:
-    """Modify ONLY <w:t> text inside existing runs so w:pPr, w:rPr, w:bidi, fonts, and colors stay untouched."""
+    """Keep paragraph/style/graphics while assigning script direction per run.
+
+    A whole mixed paragraph in w:rtl is not portable across Word and preview
+    viewers. Latin phrases (including their internal punctuation) get their
+    own explicitly LTR run, Arabic spans stay complex-script RTL.
+    """
     text = _normalize_mixed_script_spacing(text)
-    # The approved template already supplies a teal numbered-list bullet.
-    # Avoid adding a second black square into the outcome's actual text.
     if p_el.find(f"{_qn('pPr')}/{_qn('numPr')}") is not None:
         text = re.sub(r"^\s*[▪•]\s*", "", text)
-    needs_rtl = bool(_RTL_TEXT.search(text or ""))
     runs = p_el.findall(_qn("r"))
-    if not runs:
-        r = etree.SubElement(p_el, _qn("r"))
-        if needs_rtl:
-            _ensure_run_rtl(r)
-        t = etree.SubElement(r, _qn("t"))
-        t.set(f"{{{XML_NS}}}space", "preserve")
-        t.text = text
-        return
-
-    placed = False
+    text_runs = [r for r in runs if r.findall(_qn("t"))]
+    base = text_runs[0] if text_runs else (runs[0] if runs else etree.SubElement(p_el, _qn("r")))
+    style = base.find(_qn("rPr"))
+    style = copy.deepcopy(style) if style is not None else etree.Element(_qn("rPr"))
     for r in runs:
         for t in r.findall(_qn("t")):
-            if not placed:
-                t.set(f"{{{XML_NS}}}space", "preserve")
-                t.text = text
-                if needs_rtl:
-                    _ensure_run_rtl(r)
-                placed = True
-            else:
-                t.text = ""
-    if not placed:
-        if needs_rtl:
-            _ensure_run_rtl(runs[0])
-        t = etree.SubElement(runs[0], _qn("t"))
+            t.text = ""
+    # Keep an entire multi-word Latin phrase in one run, including slash,
+    # parentheses and final punctuation. No invisible direction controls.
+    parts = re.split(r"([A-Za-z0-9][A-Za-z0-9 \t/.,:;!?()+'%°µ²³=×−–_-]*[A-Za-z0-9).!?%²³.]|[A-Za-z0-9])", text)
+    insert_at = p_el.index(base)
+    for part in parts:
+        if not part:
+            continue
+        r = etree.Element(_qn("r"))
+        rpr = copy.deepcopy(style)
+        for flag in rpr.findall(_qn("rtl")):
+            rpr.remove(flag)
+        direction = etree.SubElement(rpr, _qn("rtl"))
+        direction.set(_qn("val"), "1" if _RTL_TEXT.search(part) else "0")
+        r.append(rpr)
+        t = etree.SubElement(r, _qn("t"))
         t.set(f"{{{XML_NS}}}space", "preserve")
-        t.text = text
+        # LRM fences keep neutral slash/final punctuation with the Latin span
+        # in viewers that only partly implement w:rtl=false inside bidi text.
+        t.text = "\u200e" + part + "\u200e" if re.search(r"[A-Za-z]", part) and _RTL_TEXT.search(text) else part
+        p_el.insert(insert_at, r)
+        insert_at += 1
 
 
 def _set_element_names_keep_icon(tc_el: etree._Element, names: List[str]) -> None:

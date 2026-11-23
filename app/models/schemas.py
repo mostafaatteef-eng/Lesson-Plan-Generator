@@ -249,3 +249,4 @@ class GenerationContext(BaseModel):
     lesson_date: str = ""
     total_duration_minutes: int = 45
     teacher_instructions: str = ""
+    output_language: Literal["auto", "ar", "en"] = "auto"

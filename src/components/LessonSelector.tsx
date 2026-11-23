@@ -426,7 +426,7 @@ export const LessonSelector: React.FC<LessonSelectorProps> = ({
               >
                 <option value="auto">{t.matchTemplateLang}</option>
                 <option value="ar">{t.arabic} (العربية)</option>
-                <option value="en">{t.english}</option>
+                <option value="en">{t.english} (غير متاح بالقالب الحالي / unavailable)</option>
               </select>
             </div>
           </div>
