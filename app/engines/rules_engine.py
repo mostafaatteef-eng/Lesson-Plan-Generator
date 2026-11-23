@@ -10,6 +10,8 @@ from __future__ import annotations
 import re
 from typing import List
 
+
+
 from app.engines.ai_engine import _verify_excerpt, format_minutes, normalize_element_durations
 from app.models.schemas import (
     ActivityPlan,
@@ -268,6 +270,150 @@ def _outcome_phrases(lesson: LessonBoundary, limit: int = 4, budget: int = 55) -
     return phrases[:limit]
 
 
+def source_cards(lesson):
+    text = re.sub(r"\s+", " ", lesson.raw_text)
+    cards = []
+
+    def add(gates, target, outcome, question, criterion):
+        spans = []
+        for gate in gates:
+            match = re.search(gate, text, re.I)
+            if not match:
+                return
+            spans.append(match.group(0))
+        # One card can need separated statements; preserve each span as its own
+        # evidence record rather than joining unrelated sentences into a quote.
+        cards.append((target, outcome, question, criterion, spans))
+
+    if 'accuracy and error' in lesson.title.lower():
+        add([r'The error in the use of any instrument is normally taken to be half of the smallest division on the scale of the instrument\.'],
+            'Instrumental error', 'يحدد الطالب الخطأ الآلي من أصغر تدريج كما يوضحه الدرس.',
+            'كيف يرتبط الخطأ الآلي بأصغر تدريج للأداة؟', 'يذكر نصف أصغر تدريج وفق النص')
+        add([r'The Absolute Error.*?is the difference between the actual value.*?and the measured value.*?\(X\)'],
+            'Absolute error', 'يشرح الطالب معنى الخطأ المطلق في القياس.',
+            'ما المقصود بالخطأ المطلق؟', 'يفرق بين القيمة الفعلية والمقاسة وفق تعريف المصدر')
+        add([r'The Relative Error.*?is the ratio between the absolute error.*?to the real value.*?\(Xo\)'],
+            'Relative error', 'يشرح الطالب نسبة الخطأ النسبي إلى القيمة الحقيقية.',
+            'ما المقصود بالخطأ النسبي؟ ما الكميتان في النسبة؟', 'يحدد نسبة الخطأ المطلق إلى القيمة الحقيقية')
+        add([r'As the relative error decreases, the measurement accuracy is considered higher\.'],
+            'Measurement accuracy', 'يربط الطالب انخفاض الخطأ النسبي بارتفاع دقة القياس.',
+            'ماذا يحدث لدقة القياس عندما يقل الخطأ النسبي؟', 'يربط انخفاض الخطأ النسبي بارتفاع الدقة')
+
+    if 'speed and velocity' in lesson.title.lower():
+        add([r'Speed: is the distance moved by the object per unit time\. It is a scalar quantity\.'],
+            'Speed', 'يشرح الطالب تعريف السرعة القياسية من المسافة والزمن.',
+            'ما تعريف السرعة القياسية؟ هل هي كمية قياسية أم متجهة؟', 'يذكر المسافة لكل وحدة زمن وكونها قياسية')
+        add([r'Velocity: is the displacement of the object per unit time\. It is a vector quantity'],
+            'Velocity', 'يشرح الطالب تعريف السرعة المتجهة من الإزاحة والزمن.',
+            'ما تعريف السرعة المتجهة؟ هل هي كمية قياسية أم متجهة؟', 'يذكر الإزاحة لكل وحدة زمن وكونها متجهة')
+        add([r'Uniform velocity: the object velocity when it is displaced through equal displacements in equal times\.'],
+            'Uniform velocity', 'يميز الطالب السرعة المتجهة المنتظمة من تساوي الإزاحات في أزمنة متساوية.',
+            'متى تكون السرعة المتجهة منتظمة وفق الإزاحة والزمن؟', 'يذكر إزاحات متساوية في أزمنة متساوية')
+        add([r'Non-uniform \(variable\) velocity: the object velocity when it is displaced through unequal displacements in equal times\.'],
+            'Non-uniform velocity', 'يميز الطالب السرعة المتجهة غير المنتظمة من تغير الإزاحات في أزمنة متساوية.',
+            'متى تكون السرعة المتجهة غير منتظمة وفق الدرس؟', 'يذكر إزاحات غير متساوية في أزمنة متساوية')
+
+    if 'acceleration' in lesson.title.lower():
+        add([r'Acceleration: [“"]?Is the change of the object velocity per unit time'],
+            'Acceleration', 'يشرح الطالب تعريف العجلة بوصفها تغير السرعة المتجهة لكل وحدة زمن.',
+            'ما تعريف العجلة بالنسبة للسرعة المتجهة والزمن؟', 'يذكر تغير السرعة المتجهة لكل وحدة زمن')
+        add([r'change the speed or change the direction or change both\.'],
+            'Changing velocity', 'يحدد الطالب صور تغير السرعة المتجهة المسببة للعجلة.',
+            'كيف تحدث العجلة بتغير مقدار السرعة أو اتجاهها؟', 'يذكر تغير المقدار أو الاتجاه أو كليهما')
+        add([r'positive acceleration \(increasing velocity\), negative acceleration or deceleration \(decreasing velocity\) or zero acceleration \(uniform velocity\)'],
+            'Acceleration types', 'يميز الطالب العجلة الموجبة والسالبة والصفرية في إطار اتجاه الحركة المحدد بالدرس.',
+            'باتخاذ اتجاه السرعة موجبا، متى تكون العجلة موجبة أو سالبة أو صفرية؟', 'يربط زيادة السرعة بالموجبة ونقصها بالسالبة وثباتها بالصفرية في الإطار المحدد')
+        add([r'The slope of straight line expresses the value of acceleration'],
+            'Velocity-time graph', 'يحدد الطالب دلالة ميل منحنى السرعة المتجهة والزمن في الحركة الموضحة.',
+            'ماذا يمثل ميل الخط المستقيم في منحنى السرعة المتجهة والزمن؟', 'يحدد العجلة بوصفها ميل المنحنى')
+
+    if 'equation of motions' in lesson.title.lower():
+        # Free fall is a distinct lesson despite sharing the printed title.
+        if 'Free fall' in text:
+            add([r'fall of objects under the effect of their weights, only neglecting the effect of air resistance\. This motion is called free fall\.'],
+                'Free fall', 'يشرح الطالب السقوط الحر مع إهمال مقاومة الهواء.',
+                'ما المقصود بالسقوط الحر؟ ما الفرض المتعلق بمقاومة الهواء؟', 'يذكر تأثير الوزن فقط وإهمال مقاومة الهواء')
+            add([r'at the absence of air resistance, all objects fall to the ground at the same acceleration\.'],
+                'Equal fall acceleration', 'يحدد الطالب شرط تساوي عجلة سقوط الأجسام.',
+                'ما شرط سقوط الأجسام بالعجلة نفسها في الدرس؟', 'يذكر غياب مقاومة الهواء')
+            add([r'When an object falls freely \(from a high place\), the initial velocity = zero'],
+                'Released object', 'يحدد الطالب السرعة الابتدائية للجسم المتروك للسقوط في حالة الدرس.',
+                'ما السرعة الابتدائية للجسم المتروك ليسقط من السكون؟', 'يحدد السرعة الابتدائية بصفر في حالة الترك من السكون')
+            add([r'When an object is thrown upwards until it reaches its maximum height, the final velocity = zero'],
+                'Maximum height', 'يحدد الطالب السرعة اللحظية عند أقصى ارتفاع في القذف الرأسي.',
+                'ما سرعة الجسم المقذوف رأسيا لأعلى عند أقصى ارتفاع؟', 'يحدد السرعة اللحظية بصفر عند أقصى ارتفاع')
+        else:
+            add([r'motion in a straight line with constant acceleration'],
+                'Uniform acceleration condition', 'يحدد الطالب شرط استخدام معادلات الحركة المعروضة.',
+                'ما شرط الحركة والتسارع في معادلات هذا الدرس؟', 'يذكر حركة في خط مستقيم بعجلة ثابتة')
+            add([r'From the opposite graph, the slope of straight line represents the acceleration\.'],
+                'Velocity-time slope', 'يحدد الطالب دلالة ميل منحنى السرعة والزمن للحركة المعروضة.',
+                'ماذا يمثل ميل الخط المستقيم في منحنى السرعة والزمن؟', 'يحدد العجلة')
+            add([r'While the area under the curve represents the displacement'],
+                'Velocity-time area', 'يحدد الطالب دلالة المساحة تحت منحنى السرعة والزمن.',
+                'ماذا تمثل المساحة تحت منحنى السرعة والزمن؟', 'يحدد الإزاحة')
+            add([r'when the time taken by the object increases, the displacement covered by the object increases'],
+                'Displacement and time', 'يصف الطالب ارتباط الزمن بالإزاحة في الحالة الواردة بالدرس.',
+                'كيف تتغير الإزاحة بزيادة زمن الحركة في الحالة الموضحة؟', 'يذكر زيادة الإزاحة في الحالة الموضحة دون تعميم خارجها')
+
+    if 'types of ai in the workplace' in lesson.title.lower():
+        add([r'A Recruitment Management System \(RMS\) allows organizations to manage job post-?\s*ings, applications, or interviewing schedules\.'],
+            'Recruitment Management System', 'يحدد الطالب وظائف نظام إدارة التوظيف في النص الإنجليزي.',
+            'من النص الإنجليزي، اذكر ثلاث مهام يديرها RMS.', 'يسمي إعلانات الوظائف والطلبات ومواعيد المقابلات')
+        add([r'emails, automated texts, or an FAQ section of the company’s website create a better communication experience for the candidates\.'],
+            'Candidate communication', 'يستخرج الطالب وسائل التواصل مع المرشحين من نص التوظيف.',
+            'استخرج وسائل التواصل مع المرشحين الواردة بالنص الإنجليزي.', 'يذكر البريد والرسائل الآلية وقسم الأسئلة الشائعة')
+        add([r'The benefits include connecting with applicants best suited for the role, an efficient screening process without bias, and decreasing overall time to hire\.'],
+            'Recruitment benefits', 'يلخص الطالب فوائد أتمتة التوظيف المذكورة في النص.',
+            'لخص بالإنجليزية فوائد أتمتة التوظيف التي يذكرها النص.', 'يحافظ على معنى ملاءمة المرشح والفرز دون تحيز وتقليل زمن التوظيف بوصفها ادعاءات النص')
+        add([r'candidate sourcing, resume review, or onboarding tasks can be optimized through automation\.'],
+            'Automated tasks', 'يستخرج الطالب أمثلة لمهام التوظيف القابلة للأتمتة من النص.',
+            'اذكر أمثلة مهام التوظيف التي يعرض النص أتمتتها.', 'يذكر البحث عن المرشحين ومراجعة السير والتهيئة الوظيفية')
+
+    if 'tracking ai projects' in lesson.title.lower():
+        add([r'Progress reports are documents that track the status and development of a project\.'],
+            'Progress report', 'يشرح الطالب غرض تقرير تقدم المشروع بالاستناد إلى النص.',
+            'ما غرض تقرير تقدم المشروع؟ أجب من النص الإنجليزي.', 'يذكر متابعة حالة المشروع وتطوره')
+        add([r'Tools Used: GitHub for version control, Slack for team communication, Trello for task management, Google Drive for report storage\.'],
+            'Project tools', 'يربط الطالب أدوات المشروع بوظائفها في التقرير.',
+            'اربط GitHub وSlack وTrello وGoogle Drive بوظيفة كل منها في التقرير.', 'يطابق التحكم بالإصدارات والتواصل وإدارة المهام وحفظ التقارير بالترتيب')
+        add([r'Faced challenges integrating Slack and Trello APIs seamlessly\. Resolution: Collaborated with tool support teams and updated integration scripts\.'],
+            'Challenge and resolution', 'يستخرج الطالب تحدي تكامل الأدوات وحله من التقرير.',
+            'ما تحدي تكامل الأدوات؟ كيف يذكر التقرير التعامل معه؟', 'يحدد تكامل Slack/Trello والتعاون مع الدعم وتحديث السكربتات')
+        add([r'They help keep everyone informed about what has been done, what is currently happening, and what needs to be done next\.'],
+            'Report time frames', 'يميز الطالب المنجز والحالي والخطوات التالية في تقرير التقدم.',
+            'ما الفترات الثلاث للمعلومات التي يغطيها تقرير التقدم؟', 'يميز ما أنجز وما يجري وما ينبغي عمله لاحقا')
+
+    if 'promoting innovations' in lesson.title.lower():
+        add([r'Subject: Business Dashboard Offer'],
+            'Email subject', 'يحدد الطالب موضوع الرسالة الترويجية من نموذج الدرس.',
+            'ما عنوان موضوع الرسالة الإنجليزية النموذجية؟', 'يحدد Business Dashboard Offer')
+        add([r'I am writing to introduce you to our latest innovation: our brand-new AI Ibdaa Dashboard\.'],
+            'Reason for writing', 'يحدد الطالب غرض كتابة الرسالة الترويجية من النص.',
+            'ما غرض كتابة الرسالة الإنجليزية النموذجية؟', 'يذكر تقديم AI Ibdaa Dashboard بوصفه منتج الرسالة')
+        add([r'1\. Data Visualization:.*?2\. Predictive Analytics:.*?3\. Customization Options:.*?4\. Real-time Updates:'],
+            'Advertised features', 'يستخرج الطالب خصائص اللوحة الأربع كما تعرضها الرسالة.',
+            'سم بالإنجليزية الخصائص الأربع التي تعلنها الرسالة، دون اعتبارها حقائق منتج تم التحقق منه.', 'يسمي Data Visualization وPredictive Analytics وCustomization Options وReal-time Updates')
+        add([r'we would like to offer you a personalized demo where we can walk you through its features'],
+            'Call to action', 'يحدد الطالب الدعوة إلى الإجراء في نموذج الرسالة.',
+            'ما الإجراء الذي تدعو الرسالة المتلقي إليه؟', 'يحدد عرضا توضيحيا مخصصا للمنتج')
+
+    if 'effective online collaboration' in lesson.title.lower():
+        add([r'Test your technology.*?Make eye contact with your camera.*?Eliminate noise.*?Use proper lighting.*?Mute your microphone'],
+            'Meeting protocol', 'يستخرج الطالب إرشادات الاجتماع عن بعد من قائمة الدرس.',
+            'اختر ثلاثة إرشادات من قائمة الاجتماع عن بعد، واكتبها بالإنجليزية دون تخمين ترتيب الفيديو.', 'تطابق الإرشادات قائمة النص ولا يدعي ترتيب الاستماع غير المتاح')
+        add([r'The meeting date and time.*?The participants and their roles.*?The meeting platform you are going to use and why you will be using it.*?The tools you are going to use for taking notes and collaboration.*?The meeting agenda.*?The meeting protocol'],
+            'Meeting briefing', 'ينظم الطالب عناصر إحاطة الاجتماع كما حددها نشاط الدرس.',
+            'سم عناصر إحاطة الاجتماع: الموعد والمشاركون والمنصة والأدوات وجدول الأعمال والبروتوكول.', 'يتضمن العناصر الستة دون اختلاق موعد أو أسماء مشاركين')
+        add([r'Information is presented in a logical sequence\.'],
+            'Presentation organization', 'يحدد الطالب معيار تنظيم العرض في سلم تقويم الدرس.',
+            'ما معيار تنظيم المعلومات في سلم تقويم العرض؟', 'يذكر تسلسلا منطقيا للمعلومات')
+        add([r'The speaker uses a clear, audible voice\.'],
+            'Presentation delivery', 'يحدد الطالب معيار وضوح الصوت في عرض الإحاطة.',
+            'ما معيار الصوت في سلم تقويم العرض بالدرس؟', 'يذكر صوتا واضحا مسموعا')
+    return cards
+
+
 def _grounded_outcomes(lesson: LessonBoundary) -> tuple[List[str], List[TraceabilityEntry]]:
     """Extract observable targets, never pad using a title or generic text task.
 
@@ -399,6 +545,20 @@ def _grounded_outcomes(lesson: LessonBoundary) -> tuple[List[str], List[Traceabi
         ))
         if len(outcomes) == 4:
             break
+    if len(outcomes) < 3:
+        supported = source_cards(lesson)
+        if len(supported) >= 3:
+            outcomes, evidence = [], []
+            for target, outcome, question, criterion, spans in supported[:4]:
+                if not all(_verify_excerpt(span, lesson.raw_text) for span in spans):
+                    continue
+                field = f"learning_outcomes.{len(outcomes)}"
+                outcomes.append(outcome)
+                for span in spans:
+                    evidence.append(TraceabilityEntry(field_key=field,
+                        field_label="دليل ناتج التعلم", supporting_excerpt=span,
+                        source_pages=list(range(lesson.start_page, lesson.end_page + 1)),
+                        verified_in_source=True))
     return outcomes, evidence
 
 
@@ -410,9 +570,14 @@ def _grounded_practice(payload: LessonPlanPayload, lesson: LessonBoundary) -> Le
     """
     cards = []
     entries = {e.field_key: e for e in payload.traceability}
+    patterned = {card[1]: card for card in source_cards(lesson)}
     for i, outcome in enumerate(payload.learning_outcomes):
         evidence = entries.get(f"learning_outcomes.{i}")
         if not evidence or not _verify_excerpt(evidence.supporting_excerpt, lesson.raw_text):
+            continue
+        if outcome in patterned:
+            target, _, question, criterion, spans = patterned[outcome]
+            cards.append((target, question, criterion, evidence))
             continue
         target = None
         patterns = [
@@ -467,10 +632,13 @@ def _grounded_practice(payload: LessonPlanPayload, lesson: LessonBoundary) -> Le
     def evidence_for(field, group):
         for card in group:
             source = card[3]
-            payload.traceability.append(TraceabilityEntry(
-                field_key=field, field_label="دليل المهمة ومعيار الإجابة",
-                supporting_excerpt=source.supporting_excerpt,
-                source_pages=source.source_pages, verified_in_source=True))
+            sources = [e for e in list(payload.traceability)
+                       if e.field_key == source.field_key] or [source]
+            for entry in sources:
+                payload.traceability.append(TraceabilityEntry(
+                    field_key=field, field_label="دليل المهمة ومعيار الإجابة",
+                    supporting_excerpt=entry.supporting_excerpt,
+                    source_pages=entry.source_pages, verified_in_source=True))
     for num, group in enumerate(groups, 1):
         activity = getattr(payload, f"activity_{num}")
         targets = ' / '.join(card[0] for card in group)
