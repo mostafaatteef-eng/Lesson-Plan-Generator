@@ -63,3 +63,14 @@ def test_session_openings_ignore_contents_running_headers_and_topics():
     assert "Data Sourcing" in lessons[0].title
     assert "Source details" in lessons[0].raw_text
     assert "Annotation examples" not in lessons[0].raw_text
+
+
+def test_wrapped_english_fact_is_complete_not_a_fragment():
+    from app.engines.rules_engine import _pick_excerpts
+    from app.models.schemas import LessonBoundary
+    lesson = LessonBoundary(lesson_id='x', lesson_number=1, title='Data Sourcing', start_page=1, end_page=1,
+        raw_text='Topic 1: Data Sourcing in AI\nDefinition\nThe process of collecting and aggregating data from various sources to be used in\nAI and machine learning models.\nData Importance:\nData is the lifeblood of AI and machine learning models.', word_count=50, confidence=1)
+    points = _pick_excerpts(lesson)
+    assert any(x.endswith('AI and machine learning models') for x in points)
+    assert not any(x.endswith('used in') for x in points)
+    assert not any('Learning Objectives' in x for x in points)
