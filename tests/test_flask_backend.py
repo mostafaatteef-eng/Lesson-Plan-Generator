@@ -666,3 +666,44 @@ def test_pdf_page_geometry_bound(client):
         headers=HEADERS,
     )
     assert r.status_code == 400
+
+
+def test_generation_readiness_reports_rules_without_credentials(client, monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("ENABLE_AI_GENERATION", raising=False)
+    data = client.get("/api/health").get_json()
+    assert data["generation"] == {"mode": "rules_fallback", "ai_enabled": False}
+    assert "OPENAI_API_KEY" not in str(data)
+
+
+def test_generation_readiness_requires_explicit_enable(client, monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key-not-used")
+    monkeypatch.delenv("ENABLE_AI_GENERATION", raising=False)
+    assert client.get("/api/health").get_json()["generation"]["ai_enabled"] is False
+    monkeypatch.setenv("ENABLE_AI_GENERATION", "1")
+    assert client.get("/api/health").get_json()["generation"]["mode"] == "ai"
+
+
+def test_rules_fallback_activities_refer_to_uploaded_python_lesson(client):
+    unit = _parse_unit(client)
+    from app.engines.rules_engine import build_rules_lesson_plan
+    from app.models.schemas import CurriculumUnit, LessonBoundary, GenerationContext, TemplateSchema
+    parsed_unit = CurriculumUnit(**unit)
+    lesson = parsed_unit.lessons[0]
+    schema_data = _parse_template(client)
+    schema = TemplateSchema(**schema_data)
+    context = GenerationContext(
+        school_name="مدرسة ابدأ", teacher_name="معلم اختبار",
+        job_title="معلم", program_or_course="Python",
+        grade_level="الصف الأول", academic_year="2026-2027",
+        branch="AI", total_duration_minutes=50,
+    )
+    plan = build_rules_lesson_plan(parsed_unit, lesson, schema, context)
+    source = lesson.raw_text
+    assert any(term in plan.activity_1.teacher_procedures for term in ("المتغير", "البيانات", "يختار"))
+    assert "مقتطف المنهج" in plan.activity_1.teacher_procedures
+    assert "سؤال:" in plan.assessment_group_1
+    assert plan.assessment_group_1 != "ملاحظة أداء الطلاب أثناء نشاط الدرس"
+    assert sum(e.duration_minutes for e in plan.lesson_elements) == 50
+    assert plan.teacher_name == "معلم اختبار"
+    assert len(source) > 30
