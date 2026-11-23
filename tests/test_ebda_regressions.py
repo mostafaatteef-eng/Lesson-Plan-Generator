@@ -293,3 +293,44 @@ def test_outcomes_refuse_generic_padding_even_with_enough_excerpt_text():
     import pytest
     with pytest.raises(InsufficientCurriculumEvidence):
         build_rules_lesson_plan(unit,lesson,schema,context)
+
+
+def test_wider_outcomes_support_mixed_case_parentheses_and_unit_table():
+    from types import SimpleNamespace
+    from app.engines.rules_engine import _grounded_outcomes
+    lesson = SimpleNamespace(title='Basic and derived units', start_page=7,end_page=8,key_concepts=[],raw_text=(
+        'First: Fundamental (basic) Physical Quantity is the physical quantity that cannot be defined in terms of other quantities.\n'
+        'Second: Derived Physical Quantity is the physical quantity that can be defined in terms of fundamental quantities.\n'
+        'Basic physical quantity\nFundamental unit\nUnit symbol\n1- Mass (m)\nkilogram\nkg\n2- Length (l)\nmeter\nm\n'))
+    outcomes,evidence = _grounded_outcomes(lesson)
+    assert len(outcomes)==4
+    assert 'Fundamental (basic)' in outcomes[0] and 'Derived Physical' in outcomes[1]
+    assert 'kilogram (kg)' in outcomes[2] and 'meter (m)' in outcomes[3]
+    assert all(e.verified_in_source for e in evidence)
+    assert all(' '.join(e.supporting_excerpt.split()) in ' '.join(lesson.raw_text.split()) for e in evidence)
+
+
+def test_wider_outcomes_support_next_line_colon_definition_and_components():
+    from types import SimpleNamespace
+    from app.engines.rules_engine import _grounded_outcomes
+    lesson = SimpleNamespace(title='Motion',start_page=1,end_page=2,key_concepts=[],raw_text=(
+        'The scalar quantity:\n“Is the physical quantity that can be fully defined by its magnitude only”.\n'
+        'The vector quantity:\n“Is a physical quantity defined by magnitude and direction”.\n'
+        'Calipers are comprised of two jaws, one attached to a fixed scale and the other to a sliding scale.\n'))
+    outcomes,evidence = _grounded_outcomes(lesson)
+    assert len(outcomes)==3
+    assert any('scalar quantity' in o for o in outcomes)
+    assert any('vector quantity' in o for o in outcomes)
+    assert any('مكونات Calipers' in o for o in outcomes)
+    assert all(e.verified_in_source for e in evidence)
+
+
+def test_wider_outcomes_never_join_an_unrelated_heading_to_a_target():
+    from types import SimpleNamespace
+    from app.engines.rules_engine import _grounded_outcomes
+    lesson = SimpleNamespace(title='Instructions',start_page=1,end_page=1,key_concepts=[],raw_text=(
+        'Take a break\nWhat is the difference between these things?\n'
+        'There are a large number of possible answers in this exercise.\n'
+        'Measuring length using the micrometer\nA micrometer is an instrument used for measuring small lengths.\n'))
+    outcomes,_ = _grounded_outcomes(lesson)
+    assert outcomes == ['يشرح الطالب تعريف A micrometer الوارد في الدرس.']
