@@ -129,6 +129,8 @@ def _generate(client, unit, lessons, template_bytes=None, context_overrides=None
     ctx = {
         "school_name": "مدرسة ابدأ",
         "teacher_name": "أ. مصطفى",
+        "class_sections": ["2A", "2B"],
+        "lesson_date": "2026-11-24",
         "job_title": "معلم أول",
         "program_or_course": "الذكاء الاصطناعي",
         "grade_level": "الثاني الثانوي",
@@ -207,6 +209,8 @@ def _generate_without_template(client):
         "context": {
             "school_name": "مدرسة ابدأ",
             "teacher_name": "أ. مصطفى",
+        "class_sections": ["2A", "2B"],
+        "lesson_date": "2026-11-24",
             "job_title": "معلم أول",
             "program_or_course": "الذكاء الاصطناعي",
             "grade_level": "الثاني الثانوي",
@@ -708,3 +712,34 @@ def test_rules_fallback_activities_refer_to_uploaded_python_lesson(client):
     assert sum(e.duration_minutes for e in plan.lesson_elements) == 50
     assert plan.teacher_name == "معلم اختبار"
     assert len(source) > 30
+
+
+@pytest.mark.parametrize("overrides", [
+    {"teacher_name": " "}, {"class_sections": []},
+    {"class_sections": ["2A", " "]}, {"class_sections": "2A"},
+    {"lesson_date": ""}, {"lesson_date": "2026-02-30"},
+])
+def test_generation_rejects_missing_or_invalid_identity(client, overrides):
+    unit = _parse_unit(client)
+    response = _generate(client, unit, unit["lessons"][:1], context_overrides=overrides)
+    assert response.status_code == 422
+    assert "detail" in response.get_json()
+    assert "plans" not in response.get_json()
+
+
+def test_identity_values_survive_generation_unchanged(client):
+    unit = _parse_unit(client)
+    response = _generate(client, unit, unit["lessons"][:1], context_overrides={
+        "teacher_name": "معلم اختبار الهوية", "class_sections": ["2A", "2B"],
+        "lesson_date": "2026-11-24",
+    })
+    assert response.status_code == 200
+    data = response.get_json()
+    # Rendering availability is tested separately. When artifacts pass, identity
+    # must remain the submitted values, never an institution default.
+    plan = data["plan"]
+    payload = plan["payload"]
+    assert payload["teacher_name"] == "معلم اختبار الهوية"
+    assert payload["class_sections"] == ["2A", "2B"]
+    assert payload["lesson_date"] == "2026-11-24"
+    assert 3 <= len(payload["learning_outcomes"]) <= 5
