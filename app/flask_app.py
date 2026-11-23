@@ -82,11 +82,11 @@ APP_PASSCODE = os.getenv("APP_PASSCODE", "")
 _PRIVATE_ASSETS_DIR = Path.home() / "ebda_private_assets"
 DEFAULT_TEMPLATE_PATH = os.getenv(
     "EBDA_DEFAULT_TEMPLATE_PATH",
-    str(_PRIVATE_ASSETS_DIR / "EBDA_Official_Template_2026-2027.docx"),
+    str(_PRIVATE_ASSETS_DIR / "EBDA_Compact_Template_2026-2027.docx"),
 )
 DEFAULT_REFERENCE_PDF_PATH = os.getenv(
     "EBDA_DEFAULT_REFERENCE_PDF_PATH",
-    str(_PRIVATE_ASSETS_DIR / "EBDA_Official_Reference_2026-2027.pdf"),
+    str(_PRIVATE_ASSETS_DIR / "EBDA_Compact_Reference_2026-2027.pdf"),
 )
 
 # Institution branding only — never lesson data. Process memory, never disk.
