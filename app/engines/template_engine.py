@@ -635,6 +635,28 @@ def inject_lesson_plan_xml_safe(
     def write_tc(tc_el: etree._Element, lines: List[str], label: str, max_chars: int = 400) -> None:
         nonlocal injected_count
         _set_cell_lines_xml_safe(tc_el, lines)
+        # Only inserted values use compact, readable 10pt single spacing.
+        # Keep the private template, labels, table widths and artwork intact.
+        for paragraph in tc_el.findall(_qn("p")):
+            ppr = paragraph.find(_qn("pPr"))
+            if ppr is None:
+                ppr = etree.SubElement(paragraph, _qn("pPr"))
+                paragraph.insert(0, ppr)
+            spacing = ppr.find(_qn("spacing"))
+            if spacing is None:
+                spacing = etree.SubElement(ppr, _qn("spacing"))
+            for key, value in {"before": "0", "after": "0", "line": "240", "lineRule": "auto"}.items():
+                spacing.set(_qn(key), value)
+            for run in paragraph.findall(_qn("r")):
+                rpr = run.find(_qn("rPr"))
+                if rpr is None:
+                    rpr = etree.SubElement(run, _qn("rPr"))
+                    run.insert(0, rpr)
+                for tag in ("sz", "szCs"):
+                    size = rpr.find(_qn(tag))
+                    if size is None:
+                        size = etree.SubElement(rpr, _qn(tag))
+                    size.set(_qn("val"), "20")
         injected_count += 1
         joined = " ".join(lines)
         if len(joined) > max_chars:
@@ -655,7 +677,23 @@ def inject_lesson_plan_xml_safe(
             for k in range(6):
                 val = items[k] if k < len(items) else ""
                 tc0 = trs[k + 1].findall(_qn("tc"))[0]
-                write_tc(tc0, [f"-{k + 1} {val}".strip()], f"{first_txt} -{k + 1}", 220)
+                write_tc(tc0, [f"-{k + 1} {val}".strip() if val else ""], f"{first_txt} -{k + 1}", 220)
+                if not val:
+                    # Unused rubric slots are empty template space, not content.
+                    # Collapse their minimum row/paragraph height, never answers.
+                    row = trs[k + 1]
+                    trpr = row.find(_qn("trPr"))
+                    if trpr is None:
+                        trpr = etree.SubElement(row, _qn("trPr"))
+                        row.insert(0, trpr)
+                    height = trpr.find(_qn("trHeight"))
+                    if height is None:
+                        height = etree.SubElement(trpr, _qn("trHeight"))
+                    height.set(_qn("val"), "20")
+                    height.set(_qn("hRule"), "atLeast")
+                    for para in row.findall(f".//{_qn('p')}"):
+                        for sz in para.findall(f".//{_qn('sz')}") + para.findall(f".//{_qn('szCs')}"):
+                            sz.set(_qn("val"), "2")
             continue
 
         # Official-template rubric: item cells carry auto-numbering (numPr) and
@@ -675,6 +713,22 @@ def inject_lesson_plan_xml_safe(
             for k, (ri, tr) in enumerate(numpr_rows[:6]):
                 val = items[k] if k < len(items) else ""
                 if not val:
+                    for tc in tr.findall(_qn("tc")):
+                        _set_cell_lines_xml_safe(tc, [""])
+                        for para in tc.findall(_qn("p")):
+                            pp = para.find(_qn("pPr"))
+                            if pp is None:
+                                pp = etree.SubElement(para, _qn("pPr"))
+                                para.insert(0, pp)
+                            sp = pp.find(_qn("spacing"))
+                            if sp is None:
+                                sp = etree.SubElement(pp, _qn("spacing"))
+                            for key, value in {"before":"0", "after":"0", "line":"20", "lineRule":"exact"}.items():
+                                sp.set(_qn(key),value)
+                        for num in tc.findall(f".//{_qn('numPr')}"):
+                            num.getparent().remove(num)
+                        for sz in tc.findall(f".//{_qn('sz')}") + tc.findall(f".//{_qn('szCs')}"):
+                            sz.set(_qn("val"), "2")
                     continue
                 for tc in tr.findall(_qn("tc")):
                     if tc.findall(f".//{_qn('numPr')}"):
@@ -808,15 +862,14 @@ def inject_lesson_plan_xml_safe(
                     # Original layout: the colored label keeps its
                     # 'الدرس ( ن <name> )' shape — only the placeholder name is
                     # replaced; the wide value cell carries the total time.
-                    mhead = re.match(r"^(الدرس\s*\(\s*\S+)(?:\s+.*?)?(\s*\))$", txt)
                     core_name = _core_lesson_name(payload.lesson_title)
-                    if mhead:
-                        _set_cell_lines_xml_safe(tc, [f"{mhead.group(1)} {core_name}{mhead.group(2)}"])
-                    else:
-                        _set_cell_lines_xml_safe(tc, [core_name])
-                    injected_count += 1
-                    # The wide value cell next to the label intentionally stays
-                    # blank in the original official template.
+                    _set_cell_lines_xml_safe(tc, ["الدرس (١)"])
+                    target = _content_tc_after(tcs, c_idx)
+                    if target is not None:
+                        write_tc(target, [core_name], "عنوان الدرس", 300)
+                        for color in target.findall(f".//{_qn('color')}"):
+                            color.attrib.clear()
+                            color.set(_qn("val"), "17252C")
                     continue
                 if re.match(r"^الفرع\s*[:：]\s*$", txt):
                     _set_cell_lines_xml_safe(tc, [f"الفرع : {payload.branch}"])
