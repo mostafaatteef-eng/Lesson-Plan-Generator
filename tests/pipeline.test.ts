@@ -486,3 +486,20 @@ test('7. Independent multipart upload, Reference PDF attach/replace/delete & inv
 });
 
 
+
+// The pure helper is covered from source without importing the React tree.
+test('subject metadata is selected before institution defaults', async () => {
+  const { readFileSync } = await import('node:fs');
+  const source = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8');
+  const helper = source.slice(source.indexOf('export function subjectMetadata'), source.indexOf('export default function App'));
+  const { transformSync } = await import('esbuild');
+  const js = transformSync(helper.replace('export function', 'function'), {loader:'ts',target:'es2022'}).code;
+  const metadata = new Function(`${js}; return subjectMetadata;`)();
+  const settings = {specialization_ar:'الذكاء الاصطناعي وتحليل البيانات',default_branch:'AI branch',default_job_title:'AI teacher',default_location:'AI lab'};
+  for (const subject of ['Physics','الفيزياء','English for AI']) {
+    assert.deepEqual(metadata(subject, settings), {branch:subject,job_title:`معلم ${subject}`,location:'يحدده المعلم'});
+  }
+  assert.deepEqual(metadata(settings.specialization_ar,settings),{branch:'AI branch',job_title:'AI teacher',location:'AI lab'});
+  assert.match(source,/branch: subjectMetadata\(advanced.subject, settings\).branch/);
+  assert.match(source,/location: subjectMetadata\(advanced.subject, settings\).location/);
+});

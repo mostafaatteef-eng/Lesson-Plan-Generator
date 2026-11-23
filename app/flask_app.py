@@ -335,6 +335,23 @@ def _b64(data: Optional[bytes]) -> Optional[str]:
     return base64.b64encode(data).decode("ascii") if data else None
 
 
+def resolve_subject_metadata(context: GenerationContext, settings) -> GenerationContext:
+    subject = context.program_or_course.strip()
+    specialty = settings.specialization_ar.strip()
+    if not subject or subject == specialty:
+        return context
+    changes = {}
+    for field, inherited, replacement in (
+        ("branch", settings.default_branch, subject),
+        ("job_title", settings.default_job_title, f"معلم {subject}"),
+        ("location", settings.default_location, "يحدده المعلم"),
+    ):
+        value = getattr(context, field).strip()
+        if not value or value == inherited.strip():
+            changes[field] = replacement
+    return context.model_copy(update=changes)
+
+
 def _run_generation_scoped(
     ctx: GenerationContext,
     unit: CurriculumUnit,
@@ -349,6 +366,8 @@ def _run_generation_scoped(
     record plus base64 artifacts. On QA-block or failure, failure_dict
     carries the full diagnostics and NO artifact bytes.
     """
+    # Also repairs inherited defaults sent by an already-open older UI.
+    ctx = resolve_subject_metadata(ctx, SETTINGS["current"])
     # Paid AI runs ONLY on explicit authorization: a saved key alone is not
     # spend permission. ENABLE_AI_GENERATION=1 must also be set server-side
     # after the user approves AI cost/scope. Default is the honest,

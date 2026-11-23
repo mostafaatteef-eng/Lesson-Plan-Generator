@@ -212,3 +212,23 @@ def test_context_accepts_output_language_without_silently_ignoring_it():
     from app.models.schemas import GenerationContext
     assert 'output_language' in GenerationContext.model_fields
     assert GenerationContext.model_fields['output_language'].default == 'auto'
+
+
+def test_subject_metadata_does_not_inherit_specialty_or_invent_a_room():
+    from app.flask_app import InstitutionSettings, resolve_subject_metadata
+    from app.models.schemas import GenerationContext
+    settings = InstitutionSettings()
+    ctx = GenerationContext(unit_id='u', lesson_id='l', template_id='t', school_name='School',
+        teacher_name='Teacher', job_title=settings.default_job_title,
+        program_or_course='Physics', grade_level='1', academic_year='2026-2027',
+        branch=settings.default_branch, location=settings.default_location)
+    for subject in ['Physics', 'الفيزياء', 'English for AI']:
+        result = resolve_subject_metadata(ctx.model_copy(update={'program_or_course': subject}), settings)
+        assert result.branch == subject
+        assert result.job_title == f'معلم {subject}'
+        assert result.location == 'يحدده المعلم'
+        assert result.teacher_name == ctx.teacher_name
+        assert ctx.branch == settings.default_branch
+    assert resolve_subject_metadata(ctx.model_copy(update={'program_or_course': settings.specialization_ar}), settings) == ctx.model_copy(update={'program_or_course': settings.specialization_ar})
+    custom = ctx.model_copy(update={'branch':'Mechanics','job_title':'Physics teacher','location':'Room 12'})
+    assert resolve_subject_metadata(custom, settings) == custom
