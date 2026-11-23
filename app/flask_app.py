@@ -52,6 +52,7 @@ import time
 from datetime import datetime, timezone
 import zipfile
 from functools import wraps
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from flask import Flask, jsonify, request
@@ -76,8 +77,17 @@ FRONTEND_ORIGIN = os.getenv("FRONTEND_ORIGIN", "https://mostafaatteef-eng.github
 APP_PASSCODE = os.getenv("APP_PASSCODE", "")
 
 # Built-in official template assets (server-private paths, outside the repo).
-DEFAULT_TEMPLATE_PATH = os.getenv("EBDA_DEFAULT_TEMPLATE_PATH", "")
-DEFAULT_REFERENCE_PDF_PATH = os.getenv("EBDA_DEFAULT_REFERENCE_PDF_PATH", "")
+# Automatically use institution-approved files in a private home directory.
+# Environment variables can still override the paths for managed deployments.
+_PRIVATE_ASSETS_DIR = Path.home() / "ebda_private_assets"
+DEFAULT_TEMPLATE_PATH = os.getenv(
+    "EBDA_DEFAULT_TEMPLATE_PATH",
+    str(_PRIVATE_ASSETS_DIR / "EBDA_Official_Template_2026-2027.docx"),
+)
+DEFAULT_REFERENCE_PDF_PATH = os.getenv(
+    "EBDA_DEFAULT_REFERENCE_PDF_PATH",
+    str(_PRIVATE_ASSETS_DIR / "EBDA_Official_Reference_2026-2027.pdf"),
+)
 
 # Institution branding only — never lesson data. Process memory, never disk.
 SETTINGS: Dict[str, "InstitutionSettings"] = {}
