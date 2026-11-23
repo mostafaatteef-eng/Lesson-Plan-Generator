@@ -62,18 +62,12 @@ class ApproveFieldsRequest(BaseModel):
 
 
 def _render_pdf_with_fallback(docx_bytes: bytes, schema: TemplateSchema) -> tuple[bytes, bool]:
-    try:
-        return render_docx_to_pdf_libreoffice(docx_bytes)
-    except Exception:
-        import fitz
+    """Only export a genuine PDF converted from the generated DOCX.
 
-        doc = fitz.open()
-        for i in range(max(1, schema.page_count_expected)):
-            pg = doc.new_page(width=schema.page_width_pt, height=schema.page_height_pt)
-            pg.insert_text((48, 64), f"ATS-MU Lesson Plan Export — Page {i + 1} of {schema.page_count_expected}")
-        data = doc.tobytes()
-        doc.close()
-        return data, False
+    Never manufacture a placeholder PDF that could be mistaken for a lesson plan.
+    Conversion failures propagate to the caller and block PDF delivery.
+    """
+    return render_docx_to_pdf_libreoffice(docx_bytes)
 
 
 @app.get("/", response_class=HTMLResponse)
