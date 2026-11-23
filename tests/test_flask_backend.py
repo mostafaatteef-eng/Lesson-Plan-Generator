@@ -708,8 +708,10 @@ def test_rules_fallback_activities_refer_to_uploaded_python_lesson(client):
     plan = build_rules_lesson_plan(parsed_unit, lesson, schema, context)
     source = lesson.raw_text
     assert any(term in plan.element_1_summary for term in ("المتغير", "البيانات", "يختار"))
-    assert "مقتطف المصدر" in plan.activity_1.teacher_procedures
-    assert "مقتطف الأول" in plan.assessment_group_1
+    assert "المتغير" in plan.activity_1.teacher_procedures
+    assert "مقتطف" not in plan.activity_1.teacher_procedures
+    assert "المتغير" in plan.assessment_group_1
+    assert "مقتطف" not in plan.assessment_group_1
     assert plan.assessment_group_1 != "ملاحظة أداء الطلاب أثناء نشاط الدرس"
     assert sum(e.duration_minutes for e in plan.lesson_elements) == 50
     assert plan.teacher_name == "معلم اختبار"

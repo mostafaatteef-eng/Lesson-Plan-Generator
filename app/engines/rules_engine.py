@@ -402,6 +402,141 @@ def _grounded_outcomes(lesson: LessonBoundary) -> tuple[List[str], List[Traceabi
     return outcomes, evidence
 
 
+def _grounded_practice(payload: LessonPlanPayload, lesson: LessonBoundary) -> LessonPlanPayload:
+    """Build named tasks from the same verified targets as the outcomes.
+
+    The task mechanics are a proposed teaching adaptation. Their subject matter
+    and answer criteria come only from each target's own source evidence.
+    """
+    cards = []
+    entries = {e.field_key: e for e in payload.traceability}
+    for i, outcome in enumerate(payload.learning_outcomes):
+        evidence = entries.get(f"learning_outcomes.{i}")
+        if not evidence or not _verify_excerpt(evidence.supporting_excerpt, lesson.raw_text):
+            continue
+        target = None
+        patterns = [
+            ('definition', r"^يشرح الطالب تعريف (.+?) الوارد في الدرس"),
+            ('definition', r"^يعرّف الطالب (.+?) كما ورد في الدرس"),
+            ('components', r"^يعدد الطالب مكونات (.+?) الواردة في الدرس"),
+            ('components', r"^يعدد الطالب عناصر (.+?) الوارد في الدرس"),
+            ('classification', r"^يصنف الطالب (.+?) إلى الفئات المذكورة في الدرس"),
+            ('classification', r"^يصنف الطالب الفرعين (.+?) الوارد في الدرس"),
+            ('unit', r"^يحدد الطالب وحدة قياس (.+?) (?:ورمزها من جدول|المذكورة في) الدرس"),
+        ]
+        for kind, pattern in patterns:
+            match = re.search(pattern, outcome)
+            if match:
+                target = match.group(1).strip()
+                break
+        if target:
+            if kind == 'definition':
+                question = f"ما تعريف {target}؟"
+                criterion = f"تعريف {target} يحافظ على معنى تعريف المصدر"
+            elif kind == 'components':
+                question = f"عدد مكونات {target} المذكورة في الدرس."
+                criterion = f"قائمة مكونات {target} تطابق المصدر دون إضافة"
+            elif kind == 'classification':
+                question = f"ما تصنيف {target} الوارد في الدرس؟ سم الفئات."
+                criterion = f"فئات {target} وتسمياتها صحيحة وفق المصدر"
+            else:
+                question = f"ما وحدة قياس {target} ورمزها المذكوران في الدرس؟"
+                criterion = f"وحدة {target} ورمزها مطابقان للمصدر"
+        else:
+            # Explicit Arabic source objectives remain actual tasks, rather than
+            # being reduced to an instruction to summarize an unnamed excerpt.
+            action = re.match(r"^(يشرح|يحدد|يعدد|يصنف|يقارن|يكتب|يطبق|يحلل|يحسب|يرتب|يصمم|يميز|يختار) الطالب (.+)", outcome)
+            if not action:
+                continue
+            imperatives = dict(zip(
+                ['يشرح','يحدد','يعدد','يصنف','يقارن','يكتب','يطبق','يحلل','يحسب','يرتب','يصمم','يميز','يختار'],
+                ['اشرح','حدد','عدد','صنف','قارن','اكتب','طبق','حلل','احسب','رتب','صمم','ميز','اختر']))
+            target = action.group(2).rstrip(' .')
+            question = f"{imperatives[action.group(1)]} {target}."
+            criterion = f"إنجاز المهمة: {target} وفق دليل الدرس"
+        cards.append((target, question, criterion, evidence))
+    if len(cards) < 3:
+        raise InsufficientCurriculumEvidence(
+            "تعذر بناء أنشطة وتقويم لثلاثة أهداف محددة لها دليل من الدرس؛ لن تستبدل بمهام عامة.")
+    groups = [cards[:2], cards[2:]]
+    def questions(group):
+        return ' '.join(f"{i+1}) {card[1]}" for i, card in enumerate(group))
+    def evidence_for(field, group):
+        for card in group:
+            source = card[3]
+            payload.traceability.append(TraceabilityEntry(
+                field_key=field, field_label="دليل المهمة ومعيار الإجابة",
+                supporting_excerpt=source.supporting_excerpt,
+                source_pages=source.source_pages, verified_in_source=True))
+    for num, group in enumerate(groups, 1):
+        activity = getattr(payload, f"activity_{num}")
+        targets = ' / '.join(card[0] for card in group)
+        activity.activity_type = "أخرى"
+        activity.purpose = f"مهمة مقترحة: إجابات موثقة عن {targets}."
+        activity.teacher_procedures = f"يعرض مواضع {targets} في الدرس. يطرح: {questions(group)} ثم يصحح الإجابات وفق المصدر."
+        actor = "الطالب" if num == 1 else "أفراد المجموعة"
+        activity.student_procedures = f"يكتب {actor} إجابة مستقلة لكل سؤال عن {targets}، ثم يحدد موضع الدليل ويصحح الإجابة بعد المراجعة."
+        activity.student_note = f"الناتج المقترح: بطاقة إجابة عن {targets}. النجاح: إجابة صحيحة لكل سؤال مع دليلها من الدرس."
+        setattr(payload, f"element_{num}_summary", f"محور المهمة: {targets}. {questions(group)}")
+        for subfield in ['purpose','teacher_procedures','student_procedures','student_note']:
+            evidence_for(f"activity_{num}.{subfield}", group)
+        evidence_for(f"element_{num}_summary", group)
+        evidence_for(f"assessment_group_{num}", group)
+        setattr(payload, f"assessment_group_{num}", questions(group))
+        setattr(payload, f"rubric_group_{num}_items", [card[2] for card in group])
+        for i, card in enumerate(group):
+            evidence_for(f"rubric_group_{num}_items.{i}", [card])
+    payload.assessment_group_3 = "بطاقة خروج دون الرجوع للنص: " + cards[-1][1]
+    evidence_for('assessment_group_3', [cards[-1]])
+    payload.warm_up = "تكييف تدريسي مقترح من مفاهيم الدرس. سؤال تمهيدي: " + cards[0][1] + " راجع إجابتك بعد دراسة المفهوم في المصدر."
+    evidence_for('warm_up', [cards[0]])
+    summaries = [payload.warm_up, payload.element_1_summary, payload.element_2_summary,
+                 payload.assessment_group_1, payload.assessment_group_3]
+    for i, (element, summary) in enumerate(zip(payload.lesson_elements, summaries)):
+        element.brief_description = summary
+        evidence_for(f"lesson_elements.{i}.brief_description", [cards[0]] if i == 0 else groups[0] if i in (1,3) else groups[1] if i == 2 else [cards[-1]])
+    payload.missing_curriculum_notes.append(
+        "تكييف مقترح: توزيع الأهداف على بطاقتي إجابة والمراجعة الفردية والجماعية من إعداد المحرك؛ المفاهيم ومعايير الإجابة من الدرس، وليست تجربة عملية أو شرحا مولدا بالذكاء الاصطناعي.")
+    return payload
+
+
+def _trace_specialized_practice(payload: LessonPlanPayload, lesson: LessonBoundary) -> None:
+    questionnaire = any('QuestionPro' in e.supporting_excerpt for e in payload.traceability)
+    groups = (
+        [['open-ended', 'closed-ended', 'rating scale', 'biased', 'canteen'],
+         ['target population', 'small group', 'Google Forms', 'QuestionPro', 'validity', 'reliability', 'Cronbach']]
+        if questionnaire else
+        [['Structured Data', 'Unstructured Data', 'Semi-structured Data'],
+         ['hospital', 'privacy', 'bias', 'BeautifulSoup', 'Scrapy']]
+    )
+    text = re.sub(r"\s+", " ", lesson.raw_text)
+    def add(field, terms):
+        for term in terms:
+            match = re.search(re.escape(term), text, re.I)
+            if not match:
+                continue
+            # Context on both sides, kept as a literal, verified source span.
+            start = max(text.rfind('. ', 0, match.start()) + 2, match.start()-100, 0)
+            end = text.find('. ', match.end())
+            end = min(end+1 if end >= 0 else len(text), match.end()+260)
+            excerpt = text[start:end].strip()
+            payload.traceability.append(TraceabilityEntry(field_key=field,
+                field_label="دليل التكييف المتخصص", supporting_excerpt=excerpt,
+                source_pages=list(range(lesson.start_page,lesson.end_page+1)),
+                verified_in_source=_verify_excerpt(excerpt,lesson.raw_text)))
+    for num, terms in enumerate(groups,1):
+        for subfield in ['purpose','teacher_procedures','student_procedures','student_note']:
+            add(f"activity_{num}.{subfield}",terms)
+        for field in [f"element_{num}_summary",f"assessment_group_{num}"]:
+            add(field,terms)
+        for i in range(len(getattr(payload,f"rubric_group_{num}_items"))):
+            add(f"rubric_group_{num}_items.{i}",terms)
+    add('assessment_group_3',groups[1])
+    add('warm_up',groups[0])
+    for i in range(5):
+        add(f"lesson_elements.{i}.brief_description",groups[0] if i in (0,1,3) else groups[1])
+
+
 def _source_unit_number(title: str) -> str:
     match = re.search(r"(?:unit|الوحدة)\s*[:：]?\s*([0-9٠-٩]+)", title, re.I)
     return match.group(1) if match else "غير محدد"
@@ -522,7 +657,12 @@ def build_rules_lesson_plan(
         traceability=outcome_evidence,
         missing_curriculum_notes=[RULES_MODE_LABEL_AR],
     )
+    # Specialized, source-gated adaptations keep their established content.
     payload = _enrich_questionnaire(_enrich_data_sourcing(payload, lesson), lesson)
+    if not any("تكييف مقترح" in note for note in payload.missing_curriculum_notes):
+        payload = _grounded_practice(payload, lesson)
+    else:
+        _trace_specialized_practice(payload, lesson)
     if len(payload.learning_outcomes) < 3:
         raise InsufficientCurriculumEvidence(
             "لا يكفي النص لصياغة ثلاثة نواتج تعلم محددة مرتبطة بالدرس في الوضع القواعدي. "
@@ -531,7 +671,7 @@ def build_rules_lesson_plan(
     # Visible in the printable plan, not just response metadata or web UI.
     payload.warm_up = "مسودة بالقواعد؛ مقترحات لاعتماد المعلم. " + payload.warm_up
     if not any("تكييف مقترح" in n for n in payload.missing_curriculum_notes):
-        payload.missing_curriculum_notes.append("خطة عامة لفهم مقتطفات المصدر، وليست شرحًا تخصصيًا أو ترجمة. يراجع المعلم ملاءمة الأنشطة والأهداف لمادته.")
+        payload.missing_curriculum_notes.append("تكييف مقترح من محتوى الدرس، يراجعه المعلم قبل الاعتماد.")
     return payload
 
 
