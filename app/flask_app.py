@@ -4,60 +4,74 @@ Native-WSGI port of the FastAPI service (app/main.py), reusing the same
 engines and pydantic schemas. Designed for PythonAnywhere (no ASGI server
 available on free tier).
 
-Security model (single-user, in-memory):
+Privacy model (request-scoped, no retained lesson data):
+- The server keeps NO lesson data between requests. There are no curriculum,
+  template, plan or batch stores. The browser holds the uploaded files and
+  the parsed unit; every generation request carries what it needs and the
+  response carries every artifact back (base64 DOCX/PDF/ZIP). When the
+  response leaves, the server is done: inputs, parsed objects and outputs
+  are request-local and garbage-collected, including on error and on
+  disconnect (nothing was ever stored).
+- The only disk writes in the flow are LibreOffice conversion scratch
+  files inside an auto-deleted TemporaryDirectory (see render_qa_engine);
+  orphans left by a hard process kill are swept at startup.
+- Institution settings (school branding, not lesson data) stay in process
+  memory only and are never written to disk.
+
+Security model (single-user):
 - State-changing endpoints and anything that can spend an AI key require the
   ``X-App-Passcode`` header matching the server-side ``APP_PASSCODE``
   environment variable. The passcode is never embedded in the frontend
   bundle; the teacher enters it in the UI and it is held in browser memory
   only. When ``APP_PASSCODE`` is not configured on the server, all mutating
   endpoints return 503 (disabled), not an open door.
-- AI generation additionally requires ``OPENAI_API_KEY`` to be configured
-  server-side; otherwise it returns 503 with an honest message. No fake
-  data is ever generated.
-- Downloads use unguessable capability IDs and stay open (read-only).
-- /api/health exposes status/version only, no store counts.
+- AI generation additionally requires ``OPENAI_API_KEY`` plus
+  ``ENABLE_AI_GENERATION=1`` server-side; otherwise the clearly-labeled
+  rules fallback is used. No fake data is ever generated.
+- /api/health exposes status/version only.
 
 Honest PDF behaviour: PDFs are produced only by a real LibreOffice
-conversion. When LibreOffice is unavailable the plan still returns its DOCX
-and QA results, but ``pdf_available`` is False, no placeholder PDF is ever
-served, and the PDF download endpoint answers 409 with the real reason.
+conversion. When LibreOffice is unavailable QA cannot verify the render, so
+the lesson is reported as a structured block with no artifacts at all; no
+placeholder PDF or unverified DOCX is ever produced.
 """
 from __future__ import annotations
 
+import base64
 import hmac
 import io
+import json
 import os
 import secrets
 import time
+from datetime import datetime, timezone
 import zipfile
 from functools import wraps
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
-from flask import Flask, jsonify, request, send_file
+from flask import Flask, jsonify, request
 from pydantic import BaseModel, ValidationError
 
-from app.engines.ai_engine import generate_lesson_plan, regenerate_fields
-from app.engines.curriculum_engine import export_lesson_pdf, ingest_curriculum, update_boundaries
+from app.engines.ai_engine import generate_lesson_plan
+from app.engines.curriculum_engine import ingest_curriculum, update_boundaries
 from app.engines.render_qa_engine import render_docx_to_pdf_libreoffice, run_four_pillar_qa
 from app.engines.rules_engine import RULES_MODE_LABEL_AR, build_rules_lesson_plan
 from app.engines.template_engine import extract_template_schema, inject_lesson_plan_xml_safe
 from app.models.schemas import (
     CurriculumUnit,
     GenerationContext,
+    LessonBoundary,
     LessonPlanPayload,
     QAReport,
     TemplateSchema,
 )
 
-VERSION = "1.0.0"
+VERSION = "2.0.0"
 FRONTEND_ORIGIN = os.getenv("FRONTEND_ORIGIN", "https://mostafaatteef-eng.github.io")
 APP_PASSCODE = os.getenv("APP_PASSCODE", "")
 
-# In-memory session stores (single user, ephemeral on free hosting)
-UNITS: Dict[str, Dict] = {}
-TEMPLATES: Dict[str, Dict] = {}
-PLANS: Dict[str, Dict] = {}
-BATCHES: Dict[str, Dict] = {}
+# Institution branding only — never lesson data. Process memory, never disk.
+SETTINGS: Dict[str, "InstitutionSettings"] = {}
 
 
 class InstitutionSettings(BaseModel):
@@ -80,7 +94,7 @@ class InstitutionSettings(BaseModel):
     extracted_brand_color: Optional[str] = None
 
 
-SETTINGS: Dict[str, InstitutionSettings] = {"current": InstitutionSettings()}
+SETTINGS["current"] = InstitutionSettings()
 
 
 class BoundaryUpdateItem(BaseModel):
@@ -91,23 +105,15 @@ class BoundaryUpdateItem(BaseModel):
     approved: bool = True
 
 
-class BoundaryUpdateRequest(BaseModel):
+class RebindRequest(BaseModel):
+    unit: Dict[str, Any]
     lessons: List[BoundaryUpdateItem]
 
 
-class BatchGenerateRequest(BaseModel):
-    lesson_ids: List[str]
-    base_context: Dict
-
-
-class RegenerateFieldsRequest(BaseModel):
-    plan_id: str
-    field_keys: List[str]
-    instruction: str = ""
-
-
-class ApproveFieldsRequest(BaseModel):
-    approved_fields: List[str]
+class ScopedGenerateBody(BaseModel):
+    context: Dict[str, Any]
+    unit: Dict[str, Any]
+    lessons: List[Dict[str, Any]]
 
 
 def _err(status: int, detail: str):
@@ -117,6 +123,10 @@ def _err(status: int, detail: str):
 # Per-IP passcode failure tracking: 5 failures lock the source for 10 minutes.
 _PASSCODE_FAILURES: Dict[str, List] = {}
 _PASSCODE_MAX_FAILURES = 5
+# Bound the per-IP failure map: an attacker rotating source IPs must not grow
+# worker memory without limit. Expired entries are pruned first; as a last
+# resort the map resets (rate limiting only — the passcode is still required).
+_PASSCODE_FAILURES_MAX_KEYS = 5000
 _PASSCODE_LOCK_SECONDS = 600
 
 
@@ -135,6 +145,13 @@ def require_passcode(fn):
         # Key on the immediate peer only. X-Forwarded-For is client-controlled
         # unless a trusted proxy boundary strips it, so never key limits on it.
         ip = request.remote_addr or "unknown"
+        if ip not in _PASSCODE_FAILURES and len(_PASSCODE_FAILURES) >= _PASSCODE_FAILURES_MAX_KEYS:
+            now = time.time()
+            expired = [k for k, v in _PASSCODE_FAILURES.items() if v[1] <= now and v[0] == 0]
+            for k in expired:
+                del _PASSCODE_FAILURES[k]
+            if len(_PASSCODE_FAILURES) >= _PASSCODE_FAILURES_MAX_KEYS:
+                _PASSCODE_FAILURES.clear()
         state = _PASSCODE_FAILURES.setdefault(ip, [0, 0.0])
         if state[1] > time.time():
             return _err(429, "Too many failed attempts. Try again later.")
@@ -146,22 +163,6 @@ def require_passcode(fn):
                 state[1] = time.time() + _PASSCODE_LOCK_SECONDS
             return _err(401, "Missing or invalid app passcode.")
         state[0] = 0
-        return fn(*args, **kwargs)
-
-    return wrapper
-
-
-def require_ai(fn):
-    """AI endpoints run ONLY when paid AI is explicitly authorized.
-
-    A saved key alone is not spend permission: both OPENAI_API_KEY and
-    ENABLE_AI_GENERATION=1 must be set server-side.
-    """
-
-    @wraps(fn)
-    def wrapper(*args, **kwargs):
-        if not (os.getenv("OPENAI_API_KEY") and os.getenv("ENABLE_AI_GENERATION") == "1"):
-            return _err(503, "Paid AI is not authorized/configured on this server.")
         return fn(*args, **kwargs)
 
     return wrapper
@@ -185,14 +186,19 @@ def _render_pdf(docx_bytes: bytes) -> "tuple[Optional[bytes], bool]":
     return None, False
 
 
-# Free-host resource bounds: reject oversized uploads and cap retained
-# in-memory items and aggregate bytes so a session cannot exhaust the
-# 512MB disk / small RAM. Items expire after RETENTION_SECONDS (lazy sweep).
+# Request/body bounds for the free host (512MB disk / small RAM).
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 MAX_BATCH_LESSONS = 25
-MAX_STORE_ITEMS = 50
-MAX_STORE_BYTES = 200 * 1024 * 1024
-RETENTION_SECONDS = 6 * 3600
+# Bound the total decoded artifact bytes returned in one response (plan docx/pdf
+# payloads plus the batch zip they are mirrored into). Base64 inflates this by
+# 4/3 on the wire; 8 MB decoded keeps the worst-case response near ~21 MB,
+# which a free-tier host worker can buffer safely. Lessons beyond the cap fail
+# honestly instead of growing worker memory without bound.
+MAX_RESPONSE_ARTIFACT_BYTES = 8 * 1024 * 1024
+# Per-request wall-clock budget for generation. Measured per-lesson cost is
+# dominated by one LibreOffice render (~2-6s); 240s leaves headroom under the
+# hosting worker timeout for parsing and response assembly.
+GENERATE_TIME_BUDGET_SECONDS = int(os.getenv("GENERATE_TIME_BUDGET_SECONDS", "240"))
 
 _CURRICULUM_EXTS = (".pdf", ".docx", ".pptx", ".txt")
 
@@ -267,51 +273,146 @@ def _allowed(filename: str, exts) -> bool:
     return (filename or "").lower().endswith(exts)
 
 
-def _retained_bytes() -> int:
-    """Approximate retained bytes: raw blobs plus serialized parsed objects."""
-    total = 0
-    for store in (UNITS, TEMPLATES, PLANS, BATCHES):
-        for value in store.values():
-            for v in value.values():
-                if isinstance(v, (bytes, bytearray)):
-                    total += len(v)
-                elif hasattr(v, "model_dump_json"):
-                    total += len(v.model_dump_json())
-                elif isinstance(v, dict):
-                    total += len(str(v))
-    return total
+def _cleanup_lo_scratch() -> None:
+    """Remove LibreOffice conversion scratch dirs orphaned by a hard kill.
+
+    TemporaryDirectory deletes its own files on success, error and timeout;
+    only a SIGKILL/OOM of the worker itself can orphan one, and the worker is
+    gone in that case — so startup cleanup bounds the orphan's lifetime to
+    the process restart.
+    """
+    import glob
+    import shutil as _shutil
+    import tempfile as _tempfile
+
+    for path in glob.glob(os.path.join(_tempfile.gettempdir(), "atsmu_lo_*")):
+        _shutil.rmtree(path, ignore_errors=True)
 
 
-def _sweep_expired() -> None:
-    now = time.time()
-    for store in (UNITS, TEMPLATES, PLANS, BATCHES):
-        for key in [k for k, v in store.items() if now - v.get("ts", now) > RETENTION_SECONDS]:
-            del store[key]
-
-
-def _store_put(store: Dict[str, Dict], key: str, value: Dict, incoming_bytes: int = 0):
-    """Insert with count/byte bounds; error response when a cap is hit."""
-    if key not in store and len(store) >= MAX_STORE_ITEMS:
-        return _err(429, "Session storage limit reached; delete unused items and retry.")
-    if _retained_bytes() + incoming_bytes > MAX_STORE_BYTES:
-        return _err(429, "Session storage byte limit reached; delete unused items and retry.")
-    value["ts"] = time.time()
-    store[key] = value
-    return None
-
-
-def _new_capability_id(prefix: str) -> str:
-    """Full-strength (128-bit) unguessable capability ID."""
+def _new_id(prefix: str) -> str:
+    """Full-strength (128-bit) random ID used as a client-side key."""
     return f"{prefix}_{secrets.token_hex(16)}"
+
+
+def _b64(data: Optional[bytes]) -> Optional[str]:
+    return base64.b64encode(data).decode("ascii") if data else None
+
+
+def _run_generation_scoped(
+    ctx: GenerationContext,
+    unit: CurriculumUnit,
+    lesson: LessonBoundary,
+    schema: TemplateSchema,
+    template_docx: bytes,
+    ref_pdf_bytes: Optional[bytes],
+):
+    """Generate one lesson plan entirely within this request.
+
+    Returns (plan_dict, failure_dict). On success plan_dict carries the
+    record plus base64 artifacts. On QA-block or failure, failure_dict
+    carries the full diagnostics and NO artifact bytes.
+    """
+    # Paid AI runs ONLY on explicit authorization: a saved key alone is not
+    # spend permission. ENABLE_AI_GENERATION=1 must also be set server-side
+    # after the user approves AI cost/scope. Default is the honest,
+    # clearly-labeled rules fallback grounded in the uploaded source.
+    if os.getenv("OPENAI_API_KEY") and os.getenv("ENABLE_AI_GENERATION") == "1":
+        payload: LessonPlanPayload = generate_lesson_plan(unit, lesson, schema, ctx)
+        generation_mode = "ai"
+    else:
+        payload = build_rules_lesson_plan(unit, lesson, schema, ctx)
+        generation_mode = "rules_fallback"
+    out_docx, metrics = inject_lesson_plan_xml_safe(template_docx, payload)
+    if metrics.get("injected_count", 0) == 0:
+        # Honest refusal: an unrecognized template must never come back as a
+        # valid-looking but actually empty "generated" plan.
+        return None, {
+            "lesson_id": lesson.lesson_id,
+            "lesson_title": lesson.title,
+            "detail": "القالب غير معروف: لم تطابق أي خانات قابلة للتعبئة، فلم تُنتج خطة. ارفع قالب التحضير الرسمي ATS-MU.",
+        }
+    out_pdf, lo_used = _render_pdf(out_docx)
+    if out_pdf is None:
+        # QA's visual pillars need the rendered PDF. Without it no honest
+        # verification happened, so this is a structured block, not a plan.
+        return None, {
+            "lesson_id": lesson.lesson_id,
+            "lesson_title": lesson.title,
+            "detail": "تعذّر إنتاج PDF للمعاينة وفحص الجودة على هذا الخادم، فلم تُنتج الخطة. حاول مجددًا لاحقًا.",
+            "qa_blocked": True,
+        }
+    qa_status = "ok"
+    qa_dict = None
+    try:
+        qa: QAReport = run_four_pillar_qa(
+            lesson=lesson,
+            schema=schema,
+            payload=payload,
+            injection_metrics=metrics,
+            rendered_pdf_bytes=out_pdf or b"",
+            libreoffice_used=lo_used,
+            reference_pdf_bytes=ref_pdf_bytes,
+        )
+        qa_dict = qa.model_dump()
+    except Exception as exc:
+        # Fail closed: QA could not run, so nothing is verifiable. Return a
+        # structured block with no artifact bytes — never a plan with
+        # qa_report=None (the frontend cannot render that safely).
+        return None, {
+            "lesson_id": lesson.lesson_id,
+            "lesson_title": lesson.title,
+            "detail": f"تعذّر إجراء فحص الجودة، فلم تُنتج الخطة. حاول مجددًا. ({exc})",
+            "qa_blocked": True,
+        }
+
+    # Honest enforcement: a generation whose QA found blocking gates is not a
+    # valid plan. It produces no artifact bytes and is reported as a failure
+    # with the full diagnostics.
+    if qa_dict is not None:
+        blocking = [g for g in qa_dict.get("approval_gates", []) if g.get("severity") == "blocking"]
+        if qa_dict.get("overall_status") == "fail" or blocking:
+            reasons = "؛ ".join(g.get("message", "") for g in blocking if g.get("message"))
+            detail = "الخطة لم تجتز فحوصات الجودة ولم تُنتج."
+            if reasons:
+                detail = f"{detail} الأسباب: {reasons}"
+            return None, {
+                "lesson_id": lesson.lesson_id,
+                "lesson_title": lesson.title,
+                "detail": detail,
+                "qa_blocked": True,
+                "qa_report": qa_dict,
+                "blocking_gates": blocking,
+            }
+
+    plan_id = _new_id("plan")
+    record = {
+        "plan_id": plan_id,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "generation_mode": generation_mode,
+        "generation_label": None if generation_mode == "ai" else RULES_MODE_LABEL_AR,
+        "context": ctx.model_dump(),
+        "lesson_title": payload.lesson_title,
+        "payload": payload.model_dump(),
+        "qa_report": qa_dict,
+        "qa_status": qa_status,
+        "pdf_available": bool(out_pdf),
+        "pdf_status": "ok" if out_pdf else "unavailable: LibreOffice conversion failed on this host",
+        "approved_fields": [],
+        "docx_filename": f"lesson_{lesson.lesson_number}_{plan_id}.docx",
+        "pdf_filename": f"lesson_{lesson.lesson_number}_{plan_id}.pdf" if out_pdf else None,
+    }
+    return {
+        **record,
+        "docx_b64": _b64(out_docx),
+        "pdf_b64": _b64(out_pdf),
+        "_docx_bytes": out_docx,  # internal: used for the batch zip, stripped before jsonify
+        "_pdf_bytes": out_pdf,
+    }, None
 
 
 def create_app() -> Flask:
     app = Flask(__name__)
     app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_BYTES
-
-    @app.before_request
-    def sweep():
-        _sweep_expired()
 
     @app.after_request
     def add_cors(resp):
@@ -341,7 +442,7 @@ def create_app() -> Flask:
     def health():
         return jsonify({"status": "ok", "version": VERSION, "service": "ebda-lesson-studio-backend"})
 
-    # ---------------- Settings ----------------
+    # ---------------- Settings (branding only, never lesson data) ----------------
     @app.get("/api/settings")
     def get_settings():
         return jsonify(SETTINGS["current"].model_dump())
@@ -361,10 +462,14 @@ def create_app() -> Flask:
         SETTINGS["current"] = body
         return jsonify(body.model_dump())
 
-    # ---------------- Curriculum ----------------
-    @app.post("/api/curriculum/upload")
+    # ---------------- Curriculum (request-scoped) ----------------
+    @app.post("/api/curriculum/parse")
     @require_passcode
-    def upload_curriculum():
+    def parse_curriculum():
+        """Parse an uploaded curriculum file and return the full unit JSON.
+
+        Nothing is stored: the browser keeps the parsed unit and sends the
+        relevant parts back with any later request."""
         f = request.files.get("file")
         if f is None:
             return _err(400, "Missing curriculum file.")
@@ -378,57 +483,31 @@ def create_app() -> Flask:
             unit = ingest_curriculum(raw, f.filename or "curriculum.txt")
         except Exception as exc:
             return _err(400, f"Could not parse curriculum file: {exc}")
-        # Replace the engine's short id with a full-strength capability id.
-        unit.unit_id = _new_capability_id("unit")
-        err = _store_put(
-            UNITS, unit.unit_id, {"unit": unit, "bytes": raw}, len(raw) + len(unit.model_dump_json())
-        )
-        if err:
-            return err
+        unit.unit_id = _new_id("unit")
         return jsonify(unit.model_dump())
 
-    @app.put("/api/curriculum/<unit_id>/boundaries")
+    @app.post("/api/curriculum/rebind")
     @require_passcode
-    def update_curriculum_boundaries(unit_id):
-        stored = UNITS.get(unit_id)
-        if not stored:
-            return _err(404, "Curriculum unit not found.")
-        body, err = _parse_body(BoundaryUpdateRequest, request.get_json(silent=True))
+    def rebind_curriculum():
+        """Pure boundary edit: full unit in, updated unit out. No storage."""
+        body, err = _parse_body(RebindRequest, request.get_json(silent=True))
         if err:
             return err
-        updated = update_boundaries(stored["unit"], [item.model_dump() for item in body.lessons])
-        stored["unit"] = updated
+        try:
+            unit = CurriculumUnit(**body.unit)
+        except ValidationError as exc:
+            return _err(422, f"Invalid unit payload: {exc.errors()[0].get('msg', 'invalid')}")
+        updated = update_boundaries(unit, [item.model_dump() for item in body.lessons])
         return jsonify(updated.model_dump())
 
-    @app.get("/api/curriculum/<unit_id>/lesson/<lesson_id>/pdf")
-    def download_lesson_pdf(unit_id, lesson_id):
-        stored = UNITS.get(unit_id)
-        if not stored:
-            return _err(404, "Curriculum unit not found.")
-        unit: CurriculumUnit = stored["unit"]
-        lesson = next((l for l in unit.lessons if l.lesson_id == lesson_id), None)
-        if not lesson:
-            return _err(404, "Lesson not found.")
-        pdf_bytes = export_lesson_pdf(unit, lesson, stored["bytes"] if unit.file_format == "pdf" else None)
-        return send_file(
-            io.BytesIO(pdf_bytes),
-            mimetype="application/pdf",
-            as_attachment=True,
-            download_name=f"lesson_{lesson.lesson_number}.pdf",
-        )
-
-    @app.delete("/api/curriculum/<unit_id>")
+    # ---------------- Template (request-scoped) ----------------
+    @app.post("/api/template/parse")
     @require_passcode
-    def delete_curriculum(unit_id):
-        if unit_id not in UNITS:
-            return _err(404, "Curriculum unit not found.")
-        del UNITS[unit_id]
-        return jsonify({"deleted": True, "unit_id": unit_id})
+    def parse_template():
+        """Parse a template DOCX (+ optional reference PDF) into its schema.
 
-    # ---------------- Templates ----------------
-    @app.post("/api/template/upload")
-    @require_passcode
-    def upload_template():
+        Nothing is stored: the browser keeps the original files and attaches
+        them to the generation request."""
         docx = request.files.get("docx")
         if docx is None:
             return _err(400, "Missing template DOCX file.")
@@ -455,326 +534,178 @@ def create_app() -> Flask:
             )
         except Exception as exc:
             return _err(400, f"Could not parse template file: {exc}")
-        schema.template_id = _new_capability_id("tpl")
-        err = _store_put(
-            TEMPLATES,
-            schema.template_id,
-            {"schema": schema, "docx_bytes": docx_bytes, "ref_pdf_bytes": ref_bytes},
-            len(docx_bytes) + len(ref_bytes or b"") + len(schema.model_dump_json()),
-        )
-        if err:
-            return err
+        schema.template_id = _new_id("tpl")
         return jsonify(schema.model_dump())
 
-    @app.post("/api/template/<template_id>/reference-pdf")
-    @require_passcode
-    def upload_reference_pdf(template_id):
-        stored = TEMPLATES.get(template_id)
-        if not stored:
-            return _err(404, "Template not found.")
-        f = request.files.get("file") or request.files.get("reference_pdf")
-        if f is None:
-            return _err(400, "Missing reference PDF file.")
-        if not _allowed(f.filename or "", (".pdf",)):
-            return _err(400, "Reference file must be PDF.")
-        ref_bytes = f.read()
-        bad = _validate_upload(ref_bytes, f.filename or "")
-        if bad:
-            return _err(400, bad)
-        try:
-            import fitz
-
-            with fitz.open(stream=ref_bytes, filetype="pdf") as doc:
-                pages = doc.page_count
-        except Exception:
-            return _err(400, "Could not parse reference PDF file.")
-        old_len = len(stored.get("ref_pdf_bytes") or b"")
-        if _retained_bytes() - old_len + len(ref_bytes) > MAX_STORE_BYTES:
-            return _err(429, "Session storage byte limit reached; delete unused items and retry.")
-        stored["ref_pdf_bytes"] = ref_bytes
-        stored["ts"] = time.time()
-        schema: TemplateSchema = stored["schema"]
-        schema.has_reference_pdf = True
-        schema.reference_pdf_filename = f.filename
-        schema.reference_pdf_pages = pages
-        return jsonify(schema.model_dump())
-
-    @app.delete("/api/template/<template_id>/reference-pdf")
-    @require_passcode
-    def delete_reference_pdf(template_id):
-        stored = TEMPLATES.get(template_id)
-        if not stored:
-            return _err(404, "Template not found.")
-        stored["ref_pdf_bytes"] = None
-        schema: TemplateSchema = stored["schema"]
-        schema.has_reference_pdf = False
-        schema.reference_pdf_filename = None
-        schema.reference_pdf_pages = None
-        return jsonify(schema.model_dump())
-
-    @app.delete("/api/template/<template_id>")
-    @require_passcode
-    def delete_template(template_id):
-        if template_id not in TEMPLATES:
-            return _err(404, "Template not found.")
-        del TEMPLATES[template_id]
-        return jsonify({"deleted": True, "template_id": template_id})
-
-    # ---------------- Generation ----------------
-    def _run_generation(ctx: GenerationContext):
-        """Returns (record, error_response)."""
-        unit_entry = UNITS.get(ctx.unit_id)
-        if not unit_entry:
-            return None, _err(404, "Curriculum unit not found.")
-        unit: CurriculumUnit = unit_entry["unit"]
-        lesson = next((l for l in unit.lessons if l.lesson_id == ctx.lesson_id), None)
-        if not lesson:
-            return None, _err(404, "Lesson not found.")
-        tpl_entry = TEMPLATES.get(ctx.template_id)
-        if not tpl_entry:
-            return None, _err(404, "Template not found.")
-
-        schema: TemplateSchema = tpl_entry["schema"]
-        if _retained_bytes() > MAX_STORE_BYTES:
-            return None, _err(429, "Session storage byte limit reached; delete unused items and retry.")
-        # Paid AI runs ONLY on explicit authorization: a saved key alone is not
-        # spend permission. ENABLE_AI_GENERATION=1 must also be set server-side
-        # after the user approves AI cost/scope. Default is the honest,
-        # clearly-labeled rules fallback grounded in the uploaded source.
-        if os.getenv("OPENAI_API_KEY") and os.getenv("ENABLE_AI_GENERATION") == "1":
-            payload: LessonPlanPayload = generate_lesson_plan(unit, lesson, schema, ctx)
-            generation_mode = "ai"
-        else:
-            payload = build_rules_lesson_plan(unit, lesson, schema, ctx)
-            generation_mode = "rules_fallback"
-        out_docx, metrics = inject_lesson_plan_xml_safe(tpl_entry["docx_bytes"], payload)
-        out_pdf, lo_used = _render_pdf(out_docx)
-        qa_status = "ok"
-        qa_dict = None
-        try:
-            qa: QAReport = run_four_pillar_qa(
-                lesson=lesson,
-                schema=schema,
-                payload=payload,
-                injection_metrics=metrics,
-                rendered_pdf_bytes=out_pdf or b"",
-                libreoffice_used=lo_used,
-                reference_pdf_bytes=tpl_entry.get("ref_pdf_bytes"),
-            )
-            qa_dict = qa.model_dump()
-        except Exception as exc:
-            qa_status = f"blocked: QA could not run ({exc})"
-
-        plan_id = _new_capability_id("plan")
-        record = {
-            "plan_id": plan_id,
-            "generation_mode": generation_mode,
-            "generation_label": None if generation_mode == "ai" else RULES_MODE_LABEL_AR,
-            "context": ctx.model_dump(),
-            "lesson_title": payload.lesson_title,
-            "payload": payload.model_dump(),
-            "qa_report": qa_dict,
-            "qa_status": qa_status,
-            "pdf_available": bool(out_pdf),
-            "pdf_status": "ok" if out_pdf else "unavailable: LibreOffice conversion failed on this host",
-            "approved_fields": [],
-            "docx_filename": f"lesson_{lesson.lesson_number}_{plan_id}.docx",
-            "pdf_filename": f"lesson_{lesson.lesson_number}_{plan_id}.pdf" if out_pdf else None,
-        }
-        PLANS[plan_id] = {
-            "record": record,
-            "payload_obj": payload,
-            "docx_bytes": out_docx,
-            "pdf_bytes": out_pdf,
-        }
-        PLANS[plan_id]["ts"] = time.time()
-        if len(PLANS) > MAX_STORE_ITEMS or _retained_bytes() > MAX_STORE_BYTES:
-            del PLANS[plan_id]
-            return None, _err(429, "Session storage limit reached; delete unused plans and retry.")
-        return record, None
-
+    # ---------------- Generation (fully request-scoped) ----------------
     @app.post("/api/generate")
     @require_passcode
-    def generate_single():
-        ctx, err = _parse_body(GenerationContext, request.get_json(silent=True))
-        if err:
-            return err
-        record, rerr = _run_generation(ctx)
-        if rerr:
-            return rerr
-        return jsonify(record)
+    def generate():
+        """Generate lesson plans within one request and return all artifacts.
 
-    @app.post("/api/generate-batch")
-    @require_passcode
-    def generate_batch():
-        req, err = _parse_body(BatchGenerateRequest, request.get_json(silent=True))
-        if err:
-            return err
-        if not req.lesson_ids:
-            return _err(400, "Select at least one lesson.")
-        if len(req.lesson_ids) > MAX_BATCH_LESSONS:
-            return _err(400, f"Batch size is limited to {MAX_BATCH_LESSONS} lessons.")
-        records = []
-        zip_buf = io.BytesIO()
-        with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
-            for lid in req.lesson_ids:
-                ctx = GenerationContext(**{**req.base_context, "lesson_id": lid})
-                rec, rerr = _run_generation(ctx)
-                if rerr:
-                    return rerr
-                records.append(rec)
-                stored = PLANS[rec["plan_id"]]
-                zf.writestr(rec["docx_filename"], stored["docx_bytes"])
-                if stored["pdf_bytes"]:
-                    zf.writestr(rec["pdf_filename"], stored["pdf_bytes"])
+        Multipart fields:
+          template      DOCX file (required) — the browser-held template.
+          reference_pdf PDF file (optional) — QA visual reference.
+          request       JSON string: {context, unit, lessons[]} where lessons
+                        are the full LessonBoundary objects (with raw_text)
+                        selected in the UI.
 
-        batch_id = _new_capability_id("batch")
-        err = _store_put(
-            BATCHES,
-            batch_id,
-            {"filename": f"ATS-MU_Batch_{batch_id}.zip", "zip_bytes": zip_buf.getvalue()},
-            zip_buf.tell(),
-        )
-        if err:
-            return err
-        return jsonify({"batch_id": batch_id, "plans": records})
+        Response: single lesson -> {"plan": {...}} or 422 with diagnostics;
+        multiple -> {"plans": [...], "failures": [...], "zip_b64": ...}.
+        Nothing is stored server-side; when this response leaves, the server
+        holds nothing from the request.
+        """
+        tpl_file = request.files.get("template")
+        if tpl_file is None:
+            return _err(400, "Missing template DOCX file.")
+        if not _allowed(tpl_file.filename or "", (".docx",)):
+            return _err(400, "Template file must be DOCX.")
+        template_bytes = tpl_file.read()
+        bad = _validate_upload(template_bytes, tpl_file.filename or "")
+        if bad:
+            return _err(400, bad)
+        ref_file = request.files.get("reference_pdf")
+        ref_bytes = None
+        if ref_file is not None:
+            if not _allowed(ref_file.filename or "", (".pdf",)):
+                return _err(400, "Reference file must be PDF.")
+            ref_bytes = ref_file.read()
+            bad = _validate_upload(ref_bytes, ref_file.filename or "")
+            if bad:
+                return _err(400, bad)
 
-    @app.post("/api/regenerate-fields")
-    @require_passcode
-    @require_ai
-    def regenerate_plan_fields():
-        req, err = _parse_body(RegenerateFieldsRequest, request.get_json(silent=True))
-        if err:
-            return err
-        stored = PLANS.get(req.plan_id)
-        if not stored:
-            return _err(404, "Plan not found.")
-        approved = set(stored["record"]["approved_fields"])
-        unlocked = [k for k in req.field_keys if k not in approved]
-        if not unlocked:
-            return _err(400, "All selected fields are locked/approved.")
-
-        ctx = GenerationContext(**stored["record"]["context"])
-        unit_entry = UNITS[ctx.unit_id]
-        lesson = next(l for l in unit_entry["unit"].lessons if l.lesson_id == ctx.lesson_id)
-        tpl_entry = TEMPLATES[ctx.template_id]
-
-        updated_payload = regenerate_fields(lesson, stored["payload_obj"], unlocked, req.instruction)
-        out_docx, metrics = inject_lesson_plan_xml_safe(tpl_entry["docx_bytes"], updated_payload)
-        out_pdf, lo_used = _render_pdf(out_docx)
+        raw_body = request.form.get("request")
+        if not raw_body:
+            return _err(400, "Missing generation request JSON.")
         try:
-            qa = run_four_pillar_qa(
-                lesson=lesson,
-                schema=tpl_entry["schema"],
-                payload=updated_payload,
-                injection_metrics=metrics,
-                rendered_pdf_bytes=out_pdf or b"",
-                libreoffice_used=lo_used,
-                reference_pdf_bytes=tpl_entry.get("ref_pdf_bytes"),
-            )
-            stored["record"]["qa_report"] = qa.model_dump()
-            stored["record"]["qa_status"] = "ok"
-        except Exception as exc:
-            stored["record"]["qa_report"] = None
-            stored["record"]["qa_status"] = f"blocked: QA could not run ({exc})"
-        old_blob = len(stored["docx_bytes"] or b"") + len(stored["pdf_bytes"] or b"")
-        if _retained_bytes() - old_blob + len(out_docx) + len(out_pdf or b"") > MAX_STORE_BYTES:
-            return _err(429, "Session storage byte limit reached; delete unused items and retry.")
-        stored["payload_obj"] = updated_payload
-        stored["docx_bytes"] = out_docx
-        stored["pdf_bytes"] = out_pdf
-        stored["ts"] = time.time()
-        stored["record"]["payload"] = updated_payload.model_dump()
-        stored["record"]["pdf_available"] = bool(out_pdf)
-        stored["record"]["pdf_status"] = (
-            "ok" if out_pdf else "unavailable: LibreOffice conversion failed on this host"
-        )
-        return jsonify(stored["record"])
-
-    @app.post("/api/plans/<plan_id>/approve-fields")
-    @require_passcode
-    def approve_plan_fields(plan_id):
-        stored = PLANS.get(plan_id)
-        if not stored:
-            return _err(404, "Plan not found.")
-        req, err = _parse_body(ApproveFieldsRequest, request.get_json(silent=True))
+            parsed = json.loads(raw_body)
+        except (ValueError, TypeError):
+            return _err(400, "Generation request is not valid JSON.")
+        body, err = _parse_body(ScopedGenerateBody, parsed)
         if err:
             return err
-        approved = set(stored["record"]["approved_fields"])
-        approved.update(req.approved_fields)
-        stored["record"]["approved_fields"] = sorted(approved)
-        return jsonify(stored["record"])
+        if not body.lessons:
+            return _err(400, "Select at least one lesson.")
+        if len(body.lessons) > MAX_BATCH_LESSONS:
+            return _err(400, f"Batch size is limited to {MAX_BATCH_LESSONS} lessons.")
 
-    # ---------------- Downloads & deletes ----------------
-    def _serve_plan(plan_id, fmt):
-        stored = PLANS.get(plan_id)
-        if not stored:
-            return _err(404, "Plan not found.")
-        if fmt == "docx":
-            return send_file(
-                io.BytesIO(stored["docx_bytes"]),
-                mimetype="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                as_attachment=True,
-                download_name=stored["record"]["docx_filename"],
+        try:
+            schema = extract_template_schema(
+                template_bytes, tpl_file.filename or "template.docx", ref_bytes,
+                ref_file.filename if ref_file else None,
             )
-        if fmt == "pdf":
-            if not stored["pdf_bytes"]:
-                return _err(409, stored["record"]["pdf_status"])
-            return send_file(
-                io.BytesIO(stored["pdf_bytes"]),
-                mimetype="application/pdf",
-                as_attachment=True,
-                download_name=stored["record"]["pdf_filename"],
-            )
-        return _err(400, "Format must be docx or pdf.")
+        except Exception as exc:
+            return _err(400, f"Could not parse template file: {exc}")
+        schema.template_id = _new_id("tpl")
 
-    def _serve_batch(batch_id):
-        batch = BATCHES.get(batch_id)
-        if not batch:
-            return _err(404, "Batch archive not found.")
-        return send_file(
-            io.BytesIO(batch["zip_bytes"]),
-            mimetype="application/zip",
-            as_attachment=True,
-            download_name=batch["filename"],
-        )
+        lessons: List[LessonBoundary] = []
+        for item in body.lessons:
+            try:
+                lessons.append(LessonBoundary(**item))
+            except ValidationError as exc:
+                return _err(422, f"Invalid lesson payload: {exc.errors()[0].get('msg', 'invalid')}")
 
-    @app.get("/api/download")
-    def download_artifact():
-        batch_id = request.args.get("batch_id")
-        plan_id = request.args.get("plan_id")
-        fmt = request.args.get("format", "docx")
-        if batch_id:
-            return _serve_batch(batch_id)
-        if not plan_id:
-            return _err(404, "Plan not found.")
-        return _serve_plan(plan_id, fmt)
+        try:
+            unit = CurriculumUnit(**{**body.unit, "lessons": lessons, "pages": []})
+        except ValidationError as exc:
+            return _err(422, f"Invalid unit payload: {exc.errors()[0].get('msg', 'invalid')}")
 
-    # Path-style aliases used by the production frontend
-    @app.get("/api/download/<plan_id>/<fmt>")
-    def download_artifact_path(plan_id, fmt):
-        return _serve_plan(plan_id, fmt)
+        plans: List[Dict] = []
+        failures: List[Dict] = []
+        response_bytes_used = 0
+        cap_reached = False
+        # Serial LibreOffice runs are the dominant cost (~seconds per lesson).
+        # Free hosts kill long requests, so stop starting new lessons once the
+        # budget is spent and report the rest as honest failures instead of
+        # dying mid-batch with nothing returned.
+        generate_started = time.monotonic()
+        for lesson in lessons:
+            if cap_reached or time.monotonic() - generate_started > GENERATE_TIME_BUDGET_SECONDS:
+                failures.append({
+                    "lesson_id": lesson.lesson_id,
+                    "lesson_title": lesson.title,
+                    "detail": (
+                        "تجاوزت المخرجات حد حجم الاستجابة لهذه الدفعة؛ "
+                        "ولّد هذا الدرس ضمن دفعة أصغر."
+                    ) if cap_reached else (
+                        "انتهت المهلة الزمنية للطلب قبل توليد هذا الدرس؛ "
+                        "أعد المحاولة بعدد دروس أقل."
+                    ),
+                })
+                continue
+            ctx_data = {
+                **body.context,
+                "unit_id": unit.unit_id,
+                "template_id": schema.template_id,
+                "lesson_id": lesson.lesson_id,
+            }
+            ctx, cerr = _parse_body(GenerationContext, ctx_data)
+            if cerr:
+                return cerr
+            try:
+                plan, failure = _run_generation_scoped(
+                    ctx, unit, lesson, schema, template_bytes, ref_bytes
+                )
+            except Exception as exc:
+                plan, failure = None, {
+                    "lesson_id": lesson.lesson_id,
+                    "lesson_title": lesson.title,
+                    "detail": f"تعذّر توليد هذا الدرس: {exc}",
+                }
+            if failure:
+                failures.append(failure)
+            else:
+                artifact_bytes = len(plan.get("_docx_bytes") or b"") + len(plan.get("_pdf_bytes") or b"")
+                if response_bytes_used + artifact_bytes > MAX_RESPONSE_ARTIFACT_BYTES:
+                    cap_reached = True
+                    failures.append({
+                        "lesson_id": lesson.lesson_id,
+                        "lesson_title": lesson.title,
+                        "detail": (
+                            "تجاوزت خطة هذا الدرس حد حجم الاستجابة؛ "
+                            "ولّده ضمن دفعة أصغر."
+                        ),
+                    })
+                    continue
+                response_bytes_used += artifact_bytes
+                plans.append(plan)
 
-    @app.get("/api/download/batch/<batch_id>")
-    def download_batch_path(batch_id):
-        return _serve_batch(batch_id)
+        if len(lessons) == 1 and failures:
+            f0 = failures[0]
+            status = 422
+            body_out = {"detail": f0.get("detail", "Generation failed.")}
+            for key in ("qa_blocked", "qa_report", "blocking_gates"):
+                if key in f0:
+                    body_out[key] = f0[key]
+            return jsonify(body_out), status
 
-    @app.delete("/api/plans/<plan_id>")
-    @require_passcode
-    def delete_plan(plan_id):
-        if plan_id not in PLANS:
-            return _err(404, "Plan not found.")
-        del PLANS[plan_id]
-        return jsonify({"deleted": True, "plan_id": plan_id})
+        zip_b64 = None
+        if len(plans) > 1:
+            zip_buf = io.BytesIO()
+            with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
+                for plan in plans:
+                    zf.writestr(plan["docx_filename"], plan["_docx_bytes"])
+                    if plan["_pdf_bytes"]:
+                        zf.writestr(plan["pdf_filename"], plan["_pdf_bytes"])
+            zip_b64 = _b64(zip_buf.getvalue())
 
-    @app.delete("/api/batches/<batch_id>")
-    @require_passcode
-    def delete_batch(batch_id):
-        if batch_id not in BATCHES:
-            return _err(404, "Batch archive not found.")
-        del BATCHES[batch_id]
-        return jsonify({"deleted": True, "batch_id": batch_id})
+        for plan in plans:
+            plan.pop("_docx_bytes", None)
+            plan.pop("_pdf_bytes", None)
 
+        if not plans:
+            return jsonify({"detail": "تعذّر إنشاء أي درس. راجع الأسباب لكل درس ثم حاول مجددًا.", "failures": failures}), 422
+
+        if len(lessons) == 1:
+            return jsonify({"plan": plans[0]})
+        return jsonify({
+            "plans": plans,
+            "failures": failures,
+            "zip_b64": zip_b64,
+            "zip_filename": "ATS-MU_Lesson_Plans.zip" if zip_b64 else None,
+        })
+
+    _cleanup_lo_scratch()
     return app
 
 
