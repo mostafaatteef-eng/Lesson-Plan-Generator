@@ -18,17 +18,22 @@ Privacy model (request-scoped, no retained lesson data):
 - Institution settings (school branding, not lesson data) stay in process
   memory only and are never written to disk.
 
-Security model (single-user):
-- State-changing endpoints and anything that can spend an AI key require the
-  ``X-App-Passcode`` header matching the server-side ``APP_PASSCODE``
-  environment variable. The passcode is never embedded in the frontend
-  bundle; the teacher enters it in the UI and it is held in browser memory
-  only. When ``APP_PASSCODE`` is not configured on the server, all mutating
-  endpoints return 503 (disabled), not an open door.
+Security model (open classroom access, owner decision 2026-11-23):
+- The tool is open: teachers use it without any sign-in or passcode. When
+  the server-side ``APP_PASSCODE`` environment variable IS set, mutating
+  endpoints require the matching ``X-App-Passcode`` header instead (opt-in
+  lock, e.g. for a private deployment); when it is empty, access is open
+  by explicit product decision, never by misconfiguration.
 - AI generation additionally requires ``OPENAI_API_KEY`` plus
   ``ENABLE_AI_GENERATION=1`` server-side; otherwise the clearly-labeled
   rules fallback is used. No fake data is ever generated.
-- /api/health exposes status/version only.
+- Built-in official template: when ``EBDA_DEFAULT_TEMPLATE_PATH`` (and
+  optionally ``EBDA_DEFAULT_REFERENCE_PDF_PATH``) point at server-private
+  files, they are used whenever a request carries no template upload, so
+  teachers only upload a curriculum file. These assets live OUTSIDE the
+  public repo; personal document metadata (creator/lastModifiedBy) is
+  scrubbed from every generated artifact.
+- /api/health exposes status/version and built-in-default availability only.
 
 Honest PDF behaviour: PDFs are produced only by a real LibreOffice
 conversion. When LibreOffice is unavailable QA cannot verify the render, so
@@ -66,9 +71,13 @@ from app.models.schemas import (
     TemplateSchema,
 )
 
-VERSION = "2.0.0"
+VERSION = "2.1.0"
 FRONTEND_ORIGIN = os.getenv("FRONTEND_ORIGIN", "https://mostafaatteef-eng.github.io")
 APP_PASSCODE = os.getenv("APP_PASSCODE", "")
+
+# Built-in official template assets (server-private paths, outside the repo).
+DEFAULT_TEMPLATE_PATH = os.getenv("EBDA_DEFAULT_TEMPLATE_PATH", "")
+DEFAULT_REFERENCE_PDF_PATH = os.getenv("EBDA_DEFAULT_REFERENCE_PDF_PATH", "")
 
 # Institution branding only — never lesson data. Process memory, never disk.
 SETTINGS: Dict[str, "InstitutionSettings"] = {}
@@ -84,11 +93,11 @@ class InstitutionSettings(BaseModel):
     default_teacher_name: str = ""
     default_job_title: str = "معلم أول الذكاء الاصطناعي وتحليل البيانات"
     default_grade_level: str = "الصف الثاني الثانوي التكنولوجي"
-    default_academic_year: str = "٢٠٢٦-٢٠٢٧"
+    default_academic_year: str = "٢٠٢٥-٢٠٢٦"
     default_branch: str = "الذكاء الاصطناعي وتحليل البيانات"
     default_knowledge_code: str = "TPK04"
     default_location: str = "معمل الذكاء الاصطناعي وتحليل البيانات"
-    default_duration_minutes: int = 50
+    default_duration_minutes: int = 45
     logo_data_url: Optional[str] = None
     logo_filename: Optional[str] = None
     extracted_brand_color: Optional[str] = None
@@ -120,6 +129,18 @@ def _err(status: int, detail: str):
     return jsonify({"detail": detail}), status
 
 
+def _client_ip() -> str:
+    """Best available client key for fairness limiting.
+
+    On PythonAnywhere the load balancer sets X-Real-IP to the real client
+    address it received the request from (remote_addr is always the LB).
+    X-Forwarded-For is client-controlled and never used. Outside PA a
+    direct client's X-Real-IP is self-supplied, which is acceptable for a
+    fairness cooldown (not a security boundary).
+    """
+    return request.headers.get("X-Real-IP") or request.remote_addr or "unknown"
+
+
 # Per-IP passcode failure tracking: 5 failures lock the source for 10 minutes.
 _PASSCODE_FAILURES: Dict[str, List] = {}
 _PASSCODE_MAX_FAILURES = 5
@@ -129,22 +150,20 @@ _PASSCODE_MAX_FAILURES = 5
 _PASSCODE_FAILURES_MAX_KEYS = 5000
 _PASSCODE_LOCK_SECONDS = 600
 
-
 def require_passcode(fn):
     """Gate for mutating / AI-spending endpoints.
 
-    Secure by default: with no server-side APP_PASSCODE configured the
-    endpoint is disabled (503), never silently open. Wrong passcodes are
-    rate-limited per source IP and compared in constant time.
+    Open by explicit product decision: with no server-side APP_PASSCODE the
+    endpoint runs without any credential. When APP_PASSCODE is set the
+    X-App-Passcode header is required; wrong passcodes are rate-limited per
+    source IP and compared in constant time.
     """
 
     @wraps(fn)
     def wrapper(*args, **kwargs):
         if not APP_PASSCODE:
-            return _err(503, "This action is disabled until a server-side APP_PASSCODE is configured.")
-        # Key on the immediate peer only. X-Forwarded-For is client-controlled
-        # unless a trusted proxy boundary strips it, so never key limits on it.
-        ip = request.remote_addr or "unknown"
+            return fn(*args, **kwargs)
+        ip = _client_ip()
         if ip not in _PASSCODE_FAILURES and len(_PASSCODE_FAILURES) >= _PASSCODE_FAILURES_MAX_KEYS:
             now = time.time()
             expired = [k for k, v in _PASSCODE_FAILURES.items() if v[1] <= now and v[0] == 0]
@@ -166,6 +185,14 @@ def require_passcode(fn):
         return fn(*args, **kwargs)
 
     return wrapper
+
+
+def _default_asset(path: str) -> Optional[bytes]:
+    """Read a server-private built-in asset (official template/reference)."""
+    if path and os.path.isfile(path):
+        with open(path, "rb") as fh:
+            return fh.read()
+    return None
 
 
 def _parse_body(model, data) -> "tuple[Optional[BaseModel], Optional[tuple]]":
@@ -440,7 +467,15 @@ def create_app() -> Flask:
 
     @app.get("/api/health")
     def health():
-        return jsonify({"status": "ok", "version": VERSION, "service": "ebda-lesson-studio-backend"})
+        return jsonify({
+            "status": "ok",
+            "version": VERSION,
+            "service": "ebda-lesson-studio-backend",
+            "defaults": {
+                "template": _default_asset(DEFAULT_TEMPLATE_PATH) is not None,
+                "reference_pdf": _default_asset(DEFAULT_REFERENCE_PDF_PATH) is not None,
+            },
+        })
 
     # ---------------- Settings (branding only, never lesson data) ----------------
     @app.get("/api/settings")
@@ -509,28 +544,30 @@ def create_app() -> Flask:
         Nothing is stored: the browser keeps the original files and attaches
         them to the generation request."""
         docx = request.files.get("docx")
-        if docx is None:
+        default_docx = None if docx is not None else _default_asset(DEFAULT_TEMPLATE_PATH)
+        if docx is None and default_docx is None:
             return _err(400, "Missing template DOCX file.")
-        if not _allowed(docx.filename or "", (".docx",)):
+        if docx is not None and not _allowed(docx.filename or "", (".docx",)):
             return _err(400, "Template file must be DOCX.")
         ref = request.files.get("reference_pdf")
         if ref is not None and not _allowed(ref.filename or "", (".pdf",)):
             return _err(400, "Reference file must be PDF.")
-        docx_bytes = docx.read()
-        bad = _validate_upload(docx_bytes, docx.filename or "")
+        docx_bytes = docx.read() if docx is not None else default_docx
+        bad = _validate_upload(docx_bytes, docx.filename if docx is not None else "builtin-template.docx")
         if bad:
             return _err(400, bad)
-        ref_bytes = ref.read() if ref is not None else None
+        ref_bytes = ref.read() if ref is not None else _default_asset(DEFAULT_REFERENCE_PDF_PATH)
         if ref_bytes is not None:
-            bad = _validate_upload(ref_bytes, ref.filename or "")
+            bad = _validate_upload(ref_bytes, (ref.filename if ref is not None else "ebda-reference.pdf") or "")
             if bad:
                 return _err(400, bad)
+        ref_name = ref.filename if ref is not None else ("ebda-reference.pdf" if ref_bytes is not None else None)
         try:
             schema = extract_template_schema(
                 docx_bytes,
-                docx.filename or "template.docx",
+                (docx.filename or "template.docx") if docx is not None else "ebda-official-template.docx",
                 ref_bytes,
-                ref.filename if ref else None,
+                ref_name,
             )
         except Exception as exc:
             return _err(400, f"Could not parse template file: {exc}")
@@ -556,12 +593,13 @@ def create_app() -> Flask:
         holds nothing from the request.
         """
         tpl_file = request.files.get("template")
-        if tpl_file is None:
+        default_template = None if tpl_file is not None else _default_asset(DEFAULT_TEMPLATE_PATH)
+        if tpl_file is None and default_template is None:
             return _err(400, "Missing template DOCX file.")
-        if not _allowed(tpl_file.filename or "", (".docx",)):
+        if tpl_file is not None and not _allowed(tpl_file.filename or "", (".docx",)):
             return _err(400, "Template file must be DOCX.")
-        template_bytes = tpl_file.read()
-        bad = _validate_upload(template_bytes, tpl_file.filename or "")
+        template_bytes = tpl_file.read() if tpl_file is not None else default_template
+        bad = _validate_upload(template_bytes, tpl_file.filename if tpl_file is not None else "builtin-template.docx")
         if bad:
             return _err(400, bad)
         ref_file = request.files.get("reference_pdf")
@@ -573,6 +611,8 @@ def create_app() -> Flask:
             bad = _validate_upload(ref_bytes, ref_file.filename or "")
             if bad:
                 return _err(400, bad)
+        elif tpl_file is None:
+            ref_bytes = _default_asset(DEFAULT_REFERENCE_PDF_PATH)
 
         raw_body = request.form.get("request")
         if not raw_body:
@@ -591,7 +631,9 @@ def create_app() -> Flask:
 
         try:
             schema = extract_template_schema(
-                template_bytes, tpl_file.filename or "template.docx", ref_bytes,
+                template_bytes,
+                (tpl_file.filename or "template.docx") if tpl_file is not None else "ebda-official-template.docx",
+                ref_bytes,
                 ref_file.filename if ref_file else None,
             )
         except Exception as exc:
