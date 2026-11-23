@@ -14,7 +14,9 @@ import {
 
 export interface UploadedFileSummary {
   name: string;
-  sizeBytes: number;
+  // Null when the real size is unknown (e.g. a server-side built-in asset);
+  // the card then shows no size rather than a fabricated "0 B".
+  sizeBytes: number | null;
   metaLine?: string;
 }
 
@@ -198,7 +200,7 @@ export const UploadCard: React.FC<UploadCardProps> = ({
                 {file.name}
               </div>
               <div className="text-[11.5px] text-[#596A72] font-mono-tabular flex flex-wrap items-center gap-x-1.5">
-                <span>{formatFileSize(file.sizeBytes)}</span>
+                {file.sizeBytes !== null && <span>{formatFileSize(file.sizeBytes)}</span>}
                 {file.metaLine && (
                   <>
                     <span aria-hidden="true">·</span>

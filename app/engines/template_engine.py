@@ -1030,6 +1030,21 @@ def inject_lesson_plan_xml_safe(
     bidi_after = len(body.findall(f".//{_qn('bidi')}")) + len(body.findall(f".//{_qn('bidiVisual')}"))
     widths_after = [el.get(_qn("w")) for el in body.findall(f".//{_qn('tcW')}")]
 
+    # Privacy scrub: the source template's document properties carry real
+    # personal names (creator/lastModifiedBy). Never let them leak into a
+    # generated plan; stamp a neutral tool identity instead.
+    try:
+        cp = doc.core_properties
+        cp.author = "EBDA AI Lesson Studio"
+        cp.last_modified_by = "EBDA AI Lesson Studio"
+        cp.title = ""
+        cp.subject = ""
+        cp.comments = ""
+        cp.category = ""
+        cp.keywords = ""
+    except Exception:
+        pass
+
     out_buf = io.BytesIO()
     doc.save(out_buf)
     metrics = {

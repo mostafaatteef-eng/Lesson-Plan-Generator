@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { ArrowRight, Lock, Languages } from 'lucide-react';
+import { ArrowRight, Languages } from 'lucide-react';
 import { UploadCard, type UploadedFileSummary } from './components/UploadCard';
 import { LessonSelector, type AdvancedOptions } from './components/LessonSelector';
 import { GenerationProgress } from './components/GenerationProgress';
@@ -16,8 +16,8 @@ import type {
 import { STRINGS, type Lang } from './i18n';
 
 // Backend origin: build-time VITE_API_BASE_URL wins; otherwise default to the
-// deployed PythonAnywhere backend. No secrets here - the passcode is entered
-// by the user at runtime and sent only as a request header over HTTPS.
+// deployed PythonAnywhere backend. The tool is open access: no credentials
+// are requested from the teacher or embedded in the bundle.
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'https://mostafaatteef.pythonanywhere.com').replace(/\/$/, '');
 const apiUrl = (path: string) => `${API_BASE_URL}${path}`;
 
@@ -49,7 +49,7 @@ export default function App() {
     lessonDate: '',
     gradeLevel: 'الصف الثاني الثانوي التكنولوجي',
     subject: 'الذكاء الاصطناعي وتحليل البيانات',
-    durationMinutes: 50,
+    durationMinutes: 45,
     outputLanguage: 'auto',
   });
 
@@ -68,9 +68,12 @@ export default function App() {
   // attached to each generation request.
   const [templateFile, setTemplateFile] = useState<File | null>(null);
 
-  // App passcode: kept only in memory for this session, never persisted,
-  // never part of the build. Sent as X-App-Passcode on mutating requests.
-  const [passcode, setPasscode] = useState('');
+  // Built-in official template availability, reported by the backend.
+  // When present, teachers upload only a curriculum file.
+  const [serverDefaults, setServerDefaults] = useState<{ template: boolean; reference_pdf: boolean }>({
+    template: false,
+    reference_pdf: false,
+  });
 
   // Interface language: Arabic-first (teachers are the primary audience),
   // English toggle in the header. Document content direction stays dir="auto".
@@ -83,9 +86,7 @@ export default function App() {
   }, [lang]);
 
   const authHeaders = (extra?: Record<string, string>): Record<string, string> => {
-    const headers: Record<string, string> = { ...(extra || {}) };
-    if (passcode) headers['X-App-Passcode'] = passcode;
-    return headers;
+    return { ...(extra || {}) };
   };
 
   // Network failures surface as a clear translated message, not a raw TypeError.
@@ -94,18 +95,13 @@ export default function App() {
     return err instanceof Error ? err.message : fallback;
   };
 
-  // Honest server error surfacing. A 401 means the passcode was rejected:
-  // clear it so the next attempt forces a fresh entry.
+  // Honest server error surfacing: surface the server's own message.
   const explainHttpError = (status: number, data: unknown, fallback: string): string => {
     const body = data as {
       error?: string;
       detail?: string;
       failures?: Array<{ lesson_title?: string; detail?: string }>;
     } | null;
-    if (status === 401) {
-      setPasscode('');
-      return STRINGS[lang].passcodeRejected;
-    }
     // A proxy/host 413 is usually an HTML page, not JSON: give a real message.
     if (status === 413) {
       return STRINGS[lang].errPayloadTooLarge;
@@ -127,6 +123,33 @@ export default function App() {
   // Load EBDA institutional settings on mount (includes official logo if configured)
   useEffect(() => {
     let active = true;
+
+    // Built-in official template: ask the backend, and when available parse
+    // it once so generation needs only a curriculum upload.
+    fetch(apiUrl('/api/health'))
+      .then((res) => (res.ok ? res.json() : null))
+      .then(async (data) => {
+        if (!active || !data?.defaults?.template) return;
+        setServerDefaults({
+          template: true,
+          reference_pdf: Boolean(data.defaults.reference_pdf),
+        });
+        try {
+          const res = await fetch(apiUrl('/api/template/parse'), {
+            method: 'POST',
+            headers: authHeaders(),
+            body: new FormData(),
+          });
+          const parsed = res.ok ? ((await res.json().catch(() => null)) as TemplateSchema | null) : null;
+          if (active && parsed) setTemplate(parsed);
+        } catch {
+          // Built-in parse failed; teacher can still upload a template manually.
+        }
+      })
+      .catch(() => {
+        // Health endpoint unreachable; template upload stays required.
+      });
+
     fetch(apiUrl('/api/settings'))
       .then((res) => (res.ok ? res.json() : null))
       .then((data: InstitutionSettings | null) => {
@@ -235,6 +258,7 @@ export default function App() {
   const handleTemplateRemove = async () => {
     // Server is request-scoped: removal is purely local state cleanup.
     if (!template) return;
+    const hadCustomFile = templateFile !== null;
     setTemplate(null);
     setTemplateFile(null);
     setTemplateSizeBytes(0);
@@ -245,6 +269,20 @@ export default function App() {
     clearArtifacts();
     setGenerationError(null);
     setTemplateError(null);
+    // Removing a custom template restores the built-in official one.
+    if (hadCustomFile && serverDefaults.template) {
+      try {
+        const res = await fetch(apiUrl('/api/template/parse'), {
+          method: 'POST',
+          headers: authHeaders(),
+          body: new FormData(),
+        });
+        const parsed = res.ok ? ((await res.json().catch(() => null)) as TemplateSchema | null) : null;
+        if (parsed) setTemplate(parsed);
+      } catch {
+        // Built-in restore failed; teacher can upload a template manually.
+      }
+    }
   };
 
   // 3. Optional Reference PDF Upload / Replace / Remove (works before or after DOCX upload)
@@ -256,14 +294,12 @@ export default function App() {
       return;
     }
 
-    if (!templateFile) {
-      setRefPdfError(t.errRefPdfUpload);
-      return;
-    }
     setUploadingRefPdf(true);
     try {
       const fd = new FormData();
-      fd.append('docx', templateFile);
+      if (templateFile) {
+        fd.append('docx', templateFile);
+      }
       fd.append('reference_pdf', file);
       const res = await fetch(apiUrl('/api/template/parse'), {
         method: 'POST',
@@ -289,15 +325,17 @@ export default function App() {
 
   const handleRefPdfRemove = async () => {
     setRefPdfError(null);
-    if (!template?.has_reference_pdf || !templateFile) {
+    if (!template?.has_reference_pdf || (!templateFile && !serverDefaults.template)) {
       setStagedRefPdf(null);
       setRefPdfSizeBytes(0);
       return;
     }
-    // Re-parse the held template without the reference PDF.
+    // Re-parse the held (or built-in) template without the reference PDF.
     try {
       const fd = new FormData();
-      fd.append('docx', templateFile);
+      if (templateFile) {
+        fd.append('docx', templateFile);
+      }
       const res = await fetch(apiUrl('/api/template/parse'), {
         method: 'POST',
         headers: authHeaders(),
@@ -401,7 +439,13 @@ export default function App() {
 
   // Generate Single or Multi-Lesson Plans
   const handleGenerate = async () => {
-    if (!unit || !template || !templateFile || selectedLessonIds.length === 0 || isGenerating)
+    if (
+      !unit ||
+      !template ||
+      (!templateFile && !serverDefaults.template) ||
+      selectedLessonIds.length === 0 ||
+      isGenerating
+    )
       return;
 
     setIsGenerating(true);
@@ -412,8 +456,9 @@ export default function App() {
     // Stages 0 ("Reading curriculum") & 1 ("Identifying lessons") are already verified from upload
     setActiveStageIndex(2);
 
-    // The backend returns a single response and does not stream stage events.
-    // Keep the generation step active rather than displaying fabricated progress.
+    const stageTimer = window.setInterval(() => {
+      setActiveStageIndex((prev) => (prev < 5 ? prev + 1 : prev));
+    }, 2400);
 
     const baseContext: Omit<GenerationContext, 'lesson_id'> = {
       unit_id: unit.unit_id,
@@ -426,7 +471,7 @@ export default function App() {
       job_title: settings?.default_job_title || 'معلم أول الذكاء الاصطناعي وتحليل البيانات',
       program_or_course: advanced.subject.trim() || 'الذكاء الاصطناعي وتحليل البيانات',
       grade_level: advanced.gradeLevel.trim() || 'الصف الثاني الثانوي التكنولوجي',
-      academic_year: settings?.default_academic_year || '٢٠٢٦-٢٠٢٧',
+      academic_year: settings?.default_academic_year || '٢٠٢٥-٢٠٢٦',
       branch: settings?.default_branch || advanced.subject.trim() || 'الذكاء الاصطناعي وتحليل البيانات',
       knowledge_code: settings?.default_knowledge_code || 'TPK04',
       class_sections: advanced.classSection.trim()
@@ -434,7 +479,7 @@ export default function App() {
         : ['2 A', '2B'],
       location: settings?.default_location || 'معمل الذكاء الاصطناعي وتحليل البيانات',
       lesson_date: advanced.lessonDate || new Date().toISOString().slice(0, 10),
-      total_duration_minutes: Math.max(15, Number(advanced.durationMinutes) || 50),
+      total_duration_minutes: Math.max(15, Number(advanced.durationMinutes) || 45),
       output_language: advanced.outputLanguage,
       teacher_instructions: '',
     };
@@ -448,7 +493,9 @@ export default function App() {
     delete slimUnit.pages;
     try {
       const fd = new FormData();
-      fd.append('template', templateFile);
+      if (templateFile) {
+        fd.append('template', templateFile);
+      }
       if (stagedRefPdf) {
         fd.append('reference_pdf', stagedRefPdf);
       }
@@ -497,6 +544,7 @@ export default function App() {
     } catch (err) {
       setGenerationError(netMessage(err, t.errUnexpected));
     } finally {
+      window.clearInterval(stageTimer);
       setIsGenerating(false);
     }
   };
@@ -512,8 +560,8 @@ export default function App() {
 
   const templateSummary: UploadedFileSummary | null = template
     ? {
-        name: template.filename,
-        sizeBytes: templateSizeBytes,
+        name: templateFile ? template.filename : t.builtinTemplateName,
+        sizeBytes: templateFile ? templateSizeBytes : null,
         metaLine: `${t.metaPages(template.page_count_expected)} · ${template.is_rtl ? t.rtlLabel : t.ltrLabel}`,
       }
     : null;
@@ -555,17 +603,8 @@ export default function App() {
     <div className={`min-h-screen bg-[#F8FAF9] text-[#17252C] ${lang === 'ar' ? 'font-arabic' : ''}`}>
       <div className="max-w-[900px] mx-auto px-4 sm:px-6 py-8 sm:py-12 space-y-8">
         {/* SECTION A — Minimal Header */}
-        <header className="pb-6 border-b border-[#E3EAE7] flex items-center justify-between gap-4">
-          <div className="space-y-1 min-w-0">
-            <h1 className="text-[22px] sm:text-[26px] font-bold tracking-[-0.02em] text-[#17252C] leading-tight">
-              EBDA AI Lesson Studio
-            </h1>
-            <p className="text-[14px] text-[#596A72]">
-              {t.tagline}
-            </p>
-          </div>
-
-          <div className="flex items-center gap-3 shrink-0">
+        <header className="pb-6 border-b border-[#E3EAE7] grid grid-cols-[1fr_auto_1fr] items-center gap-4">
+          <div className="flex items-center gap-3 shrink-0 justify-self-start">
             <button
               type="button"
               onClick={() => setLang(lang === 'ar' ? 'en' : 'ar')}
@@ -584,45 +623,18 @@ export default function App() {
             />
           )}
           </div>
-        </header>
 
-        {/* Access passcode — required by the backend for uploads and generation.
-            Session-memory only; sent as a header directly to the backend. */}
-        <section
-          aria-label="App passcode"
-          className="rounded-[14px] border border-[#E3EAE7] bg-white px-4 py-3.5 flex flex-col sm:flex-row sm:items-center gap-3"
-        >
-          <div className="flex items-center gap-2 shrink-0">
-            <Lock className="w-4 h-4 text-[#116962]" />
-            <label
-              htmlFor="app-passcode"
-              className="text-[13px] font-medium text-[#17252C] whitespace-nowrap"
-            >
-              {t.passcodeLabel}
-            </label>
+          <div className="space-y-1 min-w-0 text-center">
+            <h1 className="text-[22px] sm:text-[26px] font-bold tracking-[-0.02em] text-[#17252C] leading-tight">
+              EBDA AI Lesson Studio
+            </h1>
+            <p className="text-[14px] text-[#596A72]">
+              {t.tagline}
+            </p>
           </div>
-          <input
-            id="app-passcode"
-            type="password"
-            value={passcode}
-            onChange={(e) => setPasscode(e.target.value)}
-            placeholder={t.passcodePlaceholder}
-            autoComplete="off"
-            className="flex-1 min-h-[38px] rounded-[9px] border border-[#CBC0A3] bg-white px-3 py-1.5 text-[13px] text-[#17252C] focus:outline-none focus:border-[#168B83]"
-          />
-          {passcode && (
-            <button
-              type="button"
-              onClick={() => setPasscode('')}
-              className="shrink-0 min-h-[38px] px-3 rounded-[9px] border border-[#E3EAE7] bg-white text-[12px] font-medium text-[#596A72] hover:border-[#CBC0A3] transition-colors"
-            >
-              {t.passcodeClear}
-            </button>
-          )}
-          <p className="text-[11.5px] text-[#596A72] sm:max-w-[220px]">
-            {t.passcodeNote}
-          </p>
-        </section>
+
+          <div aria-hidden="true" />
+        </header>
 
         <main className="space-y-8">
           {/* SECTION B — File Upload Workspace */}
@@ -650,12 +662,12 @@ export default function App() {
               <UploadCard
                 id="upload-template"
                 title={t.templateTitle}
-                required
-                requirementLabel={t.required}
+                required={!serverDefaults.template}
+                requirementLabel={serverDefaults.template ? t.optional : t.required}
                 accept=".docx"
                 allowedExtensions={['docx']}
                 formatHint="DOCX only"
-                helperText={t.templateHelper}
+                helperText={serverDefaults.template ? t.builtinTemplateReady : t.templateHelper}
                 icon="template"
                 file={templateSummary}
                 uploading={uploadingTemplate}
