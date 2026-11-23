@@ -384,3 +384,38 @@ def test_practice_uses_literal_table_targets_and_component_questions():
     assert 'وحدة قياس Mass' in p.assessment_group_2
     assert 'وحدة قياس Length' in p.assessment_group_2
     assert any(e.field_key=='assessment_group_2' and 'kilogram' in e.supporting_excerpt for e in p.traceability)
+
+
+def test_revision_section_is_not_absorbed_into_last_lesson():
+    from app.engines.curriculum_engine import detect_lesson_boundaries
+    from app.models.schemas import PageText
+    pages = [PageText(page_number=1,text='Lesson 5\nEffective Online Collaboration\n'+'A supported lesson sentence. '*20),
+             PageText(page_number=2,text='More lesson content. '*20),
+             PageText(page_number=3,text='37\nRevision\nUnit 1\nDifferent revision material.')]
+    _, lessons, _ = detect_lesson_boundaries(pages,'book.pdf')
+    assert lessons[-1].end_page == 2
+    assert 'Different revision' not in lessons[-1].raw_text
+
+
+def test_pattern_cards_require_every_evidence_span():
+    from app.engines.rules_engine import source_cards
+    from types import SimpleNamespace
+    lesson = SimpleNamespace(title='Lesson 5: Accuracy and Error',raw_text=(
+        'The error in the use of any instrument is normally taken to be half of the smallest division on the scale of the instrument. '
+        'The Absolute Error (delta): is the difference between the actual value (Xo) and the measured value (X). '
+        'The Relative Error (r): is the ratio between the absolute error (delta) to the real value (Xo). '
+        'As the relative error decreases, the measurement accuracy is considered higher.'))
+    cards = source_cards(lesson)
+    assert len(cards)==4
+    assert all(_verify_excerpt(s,lesson.raw_text) for c in cards for s in c[4])
+    lesson.raw_text = lesson.raw_text.replace('half of the smallest division','a vague quantity')
+    assert len(source_cards(lesson))==3
+    lesson.raw_text = 'Accuracy and Error, definitions and examples not present.'
+    assert not source_cards(lesson)
+
+
+def test_new_cards_are_bounded_to_matching_lesson_title():
+    from app.engines.rules_engine import source_cards
+    from types import SimpleNamespace
+    lesson=SimpleNamespace(title='Unrelated lesson',raw_text='Progress reports are documents that track the status and development of a project.')
+    assert source_cards(lesson)==[]
