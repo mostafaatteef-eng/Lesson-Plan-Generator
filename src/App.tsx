@@ -21,7 +21,19 @@ import { readSavedTemplate, saveTemplate, forgetTemplate } from './lib/templateC
 // are requested from the teacher or embedded in the bundle.
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'https://mostafaatteef.pythonanywhere.com').replace(/\/$/, '');
 const apiUrl = (path: string) => `${API_BASE_URL}${path}`;
-const FRONTEND_RELEASE = '2026.11.23.5';
+const FRONTEND_RELEASE = '2026.11.23.6';
+
+// Subject metadata is not institution branding. Never invent a room or rank.
+export function subjectMetadata(subject: string, settings: InstitutionSettings | null) {
+  const selected = subject.trim() || settings?.specialization_ar || 'الذكاء الاصطناعي وتحليل البيانات';
+  const specialty = settings?.specialization_ar || 'الذكاء الاصطناعي وتحليل البيانات';
+  const sameSubject = selected === specialty.trim();
+  return {
+    branch: sameSubject ? (settings?.default_branch || selected) : selected,
+    job_title: sameSubject ? (settings?.default_job_title || 'معلم أول الذكاء الاصطناعي وتحليل البيانات') : `معلم ${selected}`,
+    location: sameSubject ? (settings?.default_location || 'معمل الذكاء الاصطناعي وتحليل البيانات') : 'يحدده المعلم',
+  };
+}
 
 export default function App() {
   // Institutional defaults & optional official uploaded EBDA logo
@@ -513,14 +525,14 @@ export default function App() {
       template_id: template.template_id,
       school_name: settings?.school_name_ar || 'مدرسة ابدأ الوطنية للعلوم التقنية — بدر',
       teacher_name: advanced.teacherName.trim(),
-      job_title: settings?.default_job_title || 'معلم أول الذكاء الاصطناعي وتحليل البيانات',
+      job_title: subjectMetadata(advanced.subject, settings).job_title,
       program_or_course: advanced.subject.trim() || 'الذكاء الاصطناعي وتحليل البيانات',
       grade_level: advanced.gradeLevel.trim() || 'الصف الثاني الثانوي التكنولوجي',
       academic_year: settings?.default_academic_year || '٢٠٢٦-٢٠٢٧',
-      branch: settings?.default_branch || advanced.subject.trim() || 'الذكاء الاصطناعي وتحليل البيانات',
+      branch: subjectMetadata(advanced.subject, settings).branch,
       knowledge_code: settings?.default_knowledge_code || 'TPK04',
       class_sections: advanced.classSection.split(/[،,]/).map((s) => s.trim()).filter(Boolean),
-      location: settings?.default_location || 'معمل الذكاء الاصطناعي وتحليل البيانات',
+      location: subjectMetadata(advanced.subject, settings).location,
       lesson_date: advanced.lessonDate,
       total_duration_minutes: Math.max(15, Number(advanced.durationMinutes) || 50),
       output_language: advanced.outputLanguage,
