@@ -698,7 +698,7 @@ export default function App() {
                   ? (lang === 'ar' ? 'الذكاء الاصطناعي مفعل على الخادم' : 'AI generation is enabled')
                   : (lang === 'ar' ? 'وضع التوليد بالقواعد: المحتوى يحتاج مراجعة المعلم' : 'Rules-based mode: teacher review is required')}
               </p>
-            )
+            )}
             {template && (
               <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-[#EAF4F0] px-4 py-3">
                 <span className="text-[13px] font-medium text-[#116962]">
