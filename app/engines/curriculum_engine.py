@@ -232,6 +232,14 @@ def detect_lesson_boundaries(pages: List[PageText], fallback_title: str) -> Tupl
     for idx, start_pos in enumerate(hit_indices):
         end_pos = hit_indices[idx + 1] if idx + 1 < len(hit_indices) else len(flat_lines)
         chunk = flat_lines[start_pos:end_pos]
+        # A standalone revision section is not part of the final lesson.
+        # Only a page-opening marker qualifies, never prose mentioning revision.
+        for pos, (page_no, line, _) in enumerate(chunk):
+            if re.fullmatch(r"Revision(?:\s+Unit\s+\d+)?", line.strip(), re.I):
+                prior = [v.strip() for p, v, _ in chunk[:pos] if p == page_no and v.strip()]
+                if not prior or all(v.isdigit() for v in prior):
+                    chunk = [row for row in chunk[:pos] if row[0] < page_no]
+                    break
         raw_text = "\n".join(line for _, line, _ in chunk).strip()
         start_page = chunk[0][0]
         end_page = chunk[-1][0]
