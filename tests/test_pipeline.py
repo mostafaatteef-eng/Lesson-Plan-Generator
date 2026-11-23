@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import io
+import json
 from unittest.mock import patch
 
 import fitz
 from docx import Document
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
-from fastapi.testclient import TestClient
 
 from app.engines.ai_engine import normalize_element_durations
 from app.engines.curriculum_engine import export_lesson_pdf, ingest_curriculum
@@ -17,7 +17,7 @@ from app.engines.template_engine import (
     extract_template_schema,
     inject_lesson_plan_xml_safe,
 )
-from app.main import app
+from app import flask_app as fa
 from app.models.schemas import (
     ActivityPlan,
     LessonElementPlan,
@@ -213,59 +213,81 @@ def test_4_visual_diff_extra_page_and_overflow_detection():
 
 
 def test_5_end_to_end_api_upload_generate_export():
-    client = TestClient(app)
+    """Migrated from the retired FastAPI app (app/main.py) to the Flask
+    request-scoped API: parse -> generate -> artifacts in the response.
+    Engine-level coverage of the old pipeline lives in tests 1-4 above."""
+    import base64
+
+    fa.APP_PASSCODE = "pipeline-test-pass"
+    fa._PASSCODE_FAILURES.clear()
+    client = fa.application.test_client()
+    headers = {"X-App-Passcode": "pipeline-test-pass"}
     curr_text = (
         "الوحدة الثالثة: PLC\n"
         "--- PAGE 1 ---\n"
         "الدرس الأول: مكونات وحدة التحكم المنطقي المبرمج\n"
-        "تتكون منظومة الـ PLC الأساسية من خمس وحدات رئيسية متكاملة تشمل وحدة المعالجة المركزية والذاكرة ووحدات الإدخال والإخراج.\n"
+        "تتكون منظومة الـ PLC الأساسية من خمس وحدات رئيسية متكاملة تشمل وحدة المعالجة المركزية والذاكرة ووحدات الإدخال والإخراج. "
+        "يعرض الدرس بنية كل وحدة ووظيفتها داخل المنظومة ويشرح الطلاب دور الإشارات في نقل البيانات بين الوحدات المختلفة.\n"
     )
     up_curr = client.post(
-        "/api/curriculum/upload",
-        files={"file": ("unit3.txt", curr_text.encode("utf-8"), "text/plain")},
+        "/api/curriculum/parse",
+        data={"file": (io.BytesIO(curr_text.encode("utf-8")), "unit3.txt")},
+        content_type="multipart/form-data",
+        headers=headers,
     )
     assert up_curr.status_code == 200
-    unit = up_curr.json()
+    unit = up_curr.get_json()
 
-    up_tpl = client.post(
-        "/api/template/upload",
-        files={
-            "docx": (
-                "ats_mu.docx",
-                _make_sample_rtl_docx(),
-                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            )
+    tpl_bytes = _make_sample_rtl_docx()
+    gen_body = {
+        "context": {
+            "school_name": "مدرسة التكنولوجيا التطبيقية",
+            "teacher_name": "م. أحمد محمود",
+            "job_title": "معلم أول",
+            "program_or_course": "PLC",
+            "grade_level": "الصف الثاني",
+            "academic_year": "٢٠٢٥-٢٠٢٦",
+            "branch": "الأتمتة",
+            "knowledge_code": "TPK04",
+            "class_sections": ["2 A", "2B"],
+            "location": "معمل PLC",
+            "lesson_date": "2026-03-10",
+            "total_duration_minutes": 45,
+            "teacher_instructions": "",
         },
+        "unit": {k: v for k, v in unit.items() if k not in ("lessons", "pages")},
+        "lessons": [unit["lessons"][0]],
+    }
+    gen_resp = client.post(
+        "/api/generate",
+        data={
+            "template": (io.BytesIO(tpl_bytes), "ats_mu.docx"),
+            "request": json.dumps(gen_body),
+        },
+        content_type="multipart/form-data",
+        headers=headers,
     )
-    assert up_tpl.status_code == 200
-    tpl = up_tpl.json()
-
-    with patch("app.main.generate_lesson_plan", return_value=_make_sample_payload()):
-        gen_resp = client.post(
-            "/api/generate",
-            json={
-                "unit_id": unit["unit_id"],
-                "lesson_id": unit["lessons"][0]["lesson_id"],
-                "template_id": tpl["template_id"],
-                "school_name": "مدرسة التكنولوجيا التطبيقية",
-                "teacher_name": "م. أحمد محمود",
-                "job_title": "معلم أول",
-                "program_or_course": "PLC",
-                "grade_level": "الصف الثاني",
-                "academic_year": "٢٠٢٥-٢٠٢٦",
-                "branch": "الأتمتة",
-                "knowledge_code": "TPK04",
-                "class_sections": ["2 A", "2B"],
-                "location": "معمل PLC",
-                "lesson_date": "2026-03-10",
-                "total_duration_minutes": 45,
-                "teacher_instructions": "",
-            },
-        )
     assert gen_resp.status_code == 200
-    plan = gen_resp.json()
+    plan = gen_resp.get_json()["plan"]
     assert plan["qa_report"]["time_sum_valid"] is True
 
-    dl_docx = client.get(f"/api/download?plan_id={plan['plan_id']}&format=docx")
-    assert dl_docx.status_code == 200
-    assert dl_docx.content[:2] == b"PK"
+    # Request-scoped delivery: the DOCX arrives in the response itself.
+    docx_bytes = base64.b64decode(plan["docx_b64"])
+    assert docx_bytes[:2] == b"PK"
+
+
+def test_6_clip_drops_dangling_exemplar_without_modifier():
+    """A cut that leaves one bare word after مثل must drop the exemplar clause
+    instead of shipping a misleading modifier-less noun."""
+    from app.engines.rules_engine import _clip
+
+    src = "أمثلة واقعية لتقنيات الذكاء الاصطناعي مثل المساعدات الصوتية وأنظمة التوصية والمركبات ذاتية القيادة"
+    out = _clip(src, 55)
+    assert not out.endswith("المساعدات"), out
+    assert " مثل " not in f" {out} ", out
+    assert out == "أمثلة واقعية لتقنيات الذكاء الاصطناعي"
+
+    # A surviving two-word exemplar keeps its modifier and stays.
+    src2 = "أمثلة واقعية للتقنية مثل المساعدات الصوتية وأنظمة التوصية الذكية جدا"
+    out2 = _clip(src2, 48)
+    assert out2.endswith("الصوتية"), out2
