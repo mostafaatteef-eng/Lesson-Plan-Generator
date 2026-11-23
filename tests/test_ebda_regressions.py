@@ -246,3 +246,50 @@ def test_unit_fallback_never_uses_uploaded_filename():
     actual = PageText(page_number=1, text='Unit 2: Measurement\n' + page.text)
     title, _, _ = detect_lesson_boundaries([actual], 'private-file.pdf')
     assert title == 'Unit 2: Measurement'
+
+
+def test_outcomes_name_actual_lesson_targets_and_have_individual_evidence():
+    from types import SimpleNamespace
+    from app.engines.rules_engine import _grounded_outcomes
+    physics = SimpleNamespace(title='Measurements', start_page=4, end_page=6, key_concepts=[], raw_text=(
+        'Measurement is the process of comparing an unknown quantity with a unit. '
+        'The fundamental unit of length is defined to be one meter. '
+        'The fundamental unit of mass is defined as one kilogram. '
+        'The fundamental unit of time is defined to be one second.'))
+    computing = SimpleNamespace(title='AI', start_page=8, end_page=10, key_concepts=[], raw_text=(
+        'An algorithm is a set of instructions for performing a specific task. '
+        'A data set is a collection of data points used for analysis. '
+        'Automation refers to the process of operating without human intervention.'))
+    a, evidence = _grounded_outcomes(physics)
+    b, other = _grounded_outcomes(computing)
+    assert len(a) == 4 and len(b) == 3
+    assert 'Measurement' in a[0] and 'algorithm' in b[0]
+    assert not set(a) & set(b)
+    for outcomes, entries, source in [(a, evidence, physics.raw_text), (b, other, computing.raw_text)]:
+        assert len(outcomes) == len(entries)
+        assert all(e.verified_in_source and e.supporting_excerpt in source for e in entries)
+        assert all(e.field_key == f'learning_outcomes.{i}' for i,e in enumerate(entries))
+        assert not any('المقتطف' in o or 'مفهوم AI' in o for o in outcomes)
+
+
+def test_outcomes_do_not_pad_a_title_or_misread_questions_and_pronouns():
+    from types import SimpleNamespace
+    from app.engines.rules_engine import _grounded_outcomes
+    lesson = SimpleNamespace(title='Physics',start_page=1,end_page=1,key_concepts=[],raw_text=(
+        'What is meant by measurement? There are many things in daily life. '
+        'Describing the temperature of a person as being high is scientifically inaccurate. '
+        'You must explain your results to others and discuss your ideas.'))
+    assert _grounded_outcomes(lesson) == ([], [])
+
+
+def test_outcomes_refuse_generic_padding_even_with_enough_excerpt_text():
+    from app.engines.rules_engine import build_rules_lesson_plan, InsufficientCurriculumEvidence
+    from app.models.schemas import CurriculumUnit, LessonBoundary, GenerationContext, TemplateSchema
+    lesson = LessonBoundary(lesson_id='l',lesson_number=1,confidence=1,title='Unsupported topic',start_page=1,end_page=1,
+        raw_text='Students should read the paragraph carefully and share a summary of their views. A discussion about this subject can include many opinions and different perspectives.',word_count=30)
+    unit = CurriculumUnit(unit_id='u',filename='source.txt',file_format='txt',language='en',unit_title='Unit',total_pages=1,pages=[],lessons=[lesson])
+    schema = TemplateSchema(template_id='t',filename='t.docx')
+    context = GenerationContext(unit_id='u',lesson_id='l',template_id='t',school_name='School',teacher_name='Test',job_title='Teacher',program_or_course='Subject',grade_level='1',academic_year='2026',branch='Subject')
+    import pytest
+    with pytest.raises(InsufficientCurriculumEvidence):
+        build_rules_lesson_plan(unit,lesson,schema,context)
