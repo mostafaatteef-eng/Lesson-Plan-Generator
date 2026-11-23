@@ -3,23 +3,23 @@
 @layer base {
   :root {
     --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    --font-arabic: 'IBM Plex Sans Arabic', 'Inter', sans-serif;
+    --font-arabic: 'Cairo', 'IBM Plex Sans Arabic', 'Inter', sans-serif;
     --font-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, monospace;
 
-    /* Official EBDA Color Palette */
+    /* EBDA Learning (NTSS) visual system — aligned with the live platform tokens */
     --ebda-sand: #cbc0a3;
-    --ebda-cream: #ffeaaf;
-    --ebda-teal: #1ca29a;
-    --ebda-teal-ink: #137a74;
-    --ebda-teal-hover: #0f6661;
+    --ebda-cream: #fff8e9;
+    --ebda-teal: #168b83;
+    --ebda-teal-ink: #116962;
+    --ebda-teal-hover: #0a544f;
     --ebda-yellow: #ffd700;
 
-    /* Restrained Warm-Neutral Surfaces & Ink */
-    --ebda-canvas: #faf9f5;
+    /* NTSS Surfaces & Ink */
+    --ebda-canvas: #f8faf9;
     --ebda-surface: #ffffff;
-    --ebda-border: #e6e1d3;
-    --ebda-ink: #141716;
-    --ebda-ink-muted: #525b58;
+    --ebda-border: #e3eae7;
+    --ebda-ink: #17252c;
+    --ebda-ink-muted: #596a72;
   }
 
   html {
@@ -43,7 +43,7 @@
   }
 
   *:focus-visible {
-    outline: 2px solid var(--ebda-teal);
+    outline: 3px solid var(--ebda-teal);
     outline-offset: 2px;
   }
 
