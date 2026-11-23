@@ -22,6 +22,10 @@ from app.models.schemas import (
     TraceabilityEntry,
 )
 
+class InsufficientCurriculumEvidence(ValueError):
+    """The source does not contain enough explanatory content for a real plan."""
+
+
 RULES_MODE_LABEL_AR = (
     "ملاحظة: تم إنشاء هذه الخطة بالوضع القواعدي المحدود (بدون ذكاء اصطناعي) — "
     "محتوى ثابت مبني على نص الدرس المرفوع، وتحتاج مراجعة المعلم قبل الاعتماد."
@@ -272,7 +276,7 @@ def build_rules_lesson_plan(
     # Do not claim pedagogical depth that the uploaded material cannot support.
     source_points = [_clip(f"{core}: {e}", 115) for e in excerpts if e.strip()]
     if len(source_points) < 2:
-        raise ValueError(
+        raise InsufficientCurriculumEvidence(
             "المحتوى المستخرج من الدرس لا يتضمن معلومات كافية لإنتاج أنشطة وتقييمات دقيقة. "
             "راجع صفحات الدرس أو ارفع نسخة تحتوي على النص التفصيلي؛ لن تُنتج خطة عامة بعنوان الدرس فقط."
         )
