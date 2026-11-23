@@ -85,6 +85,15 @@ def _pick_excerpts(lesson: LessonBoundary, limit: int = 4) -> List[str]:
 
     def usable(sentence: str) -> bool:
         value = sentence.strip()
+        # Avoid antecedent-free pronouns and publishing/running headers.
+        if re.match(r"^(?:we|they|it|these|those|this|what we)\b", value, re.I):
+            return False
+        if re.match(r"^(?:read|choose|complete|match|discuss|write|listen|to:|subject:|com\b|org\b|dear\b)", value, re.I):
+            return False
+        if re.match(r"^[a-z]", value) or "@" in value:
+            return False
+        if re.search(r"Administration and Operation|Science Development Office|Page \d+ of|ALL RIGHTS RESERVED", value, re.I):
+            return False
         words = re.findall(r"[A-Za-z\u0621-\u064A]{2,}", value)
         if len(words) < 7 or len(value) < 35:
             return False
@@ -300,8 +309,8 @@ def build_rules_lesson_plan(
     # Replace stock outcomes (which merely restate the heading) with
     # measurable objectives anchored in actual lesson statements.
     specific_outcomes = [
-        f"يستخرج الطالب معلومة صحيحة من النص: {excerpts[0]}",
-        f"يفسر الطالب المعلومة الواردة: {excerpts[1]}",
+        "يستخرج الطالب معلومتين من مقتطفي المصدر ويحدد موضع الدليل.",
+        "يفسر الطالب كل معلومة بكلماته دون تغيير معناها.",
     ]
     specific_outcomes.append("يقارن الطالب بين المعلومتين السابقتين ويذكر من النص وجه ارتباطهما أو اختلافهما.")
 
@@ -343,12 +352,12 @@ def build_rules_lesson_plan(
             activity_type="دراسة حالة" if num == 1 else "بحث",
             purpose=purpose,
             teacher_procedures=(
-                f"يعرض مقتطف المنهج: «{first_point if num == 1 else second_point}». يطلب تفسيرًا وشاهدًا، ويصحح الإجابات."
+                f"يعرض مقتطف المصدر في العنصر {num} ويطلب تفسيره وتحديد الدليل فيه، ثم يصحح التفسير بمقارنته بالنص."
             ),
             student_procedures=(
-                (f"تفسر المجموعة: «{first_point if num == 1 else second_point}» وتعرض شاهدها من المصدر."
+                ("تكتب المجموعة تفسيرًا للمقتطف الثاني، وتحدد عبارته الداعمة وتعرض النتيجة."
                  if cooperative
-                 else f"يفسر الطالب: «{first_point if num == 1 else second_point}» ويحدد شاهدها.")
+                 else "يكتب الطالب تفسيرًا للمقتطف الأول ويحدد عبارته الداعمة، ثم يراجعه مع المعلم.")
             ),
             student_note=note,
         )
@@ -373,30 +382,30 @@ def build_rules_lesson_plan(
         lesson_elements=elements,
         selected_strategies=selected_strategies,
         selected_resources=selected_resources,
-        assessment_group_1=f"سؤال: ما الفكرة الأساسية في المقتطف «{first_point}»؟ ادعم إجابتك من النص.",
-        assessment_group_2=f"طبّق أو فسّر المعلومة التالية بمثال من الدرس: «{second_point}».",
-        assessment_group_3=f"قارن ما تعلمته بالمعلومة الواردة: «{third_point}»؛ بيّن وجه الارتباط.",
+        assessment_group_1="ما الفكرة الأساسية للمقتطف الأول؟ اكتب تفسيرًا صحيحًا ودليلًا من المصدر.",
+        assessment_group_2="فسر المقتطف الثاني وقارن بينه وبين الأول. اذكر من المصدر وجه ارتباط أو اختلاف، أو وضح إن لم تجد علاقة مباشرة.",
+        assessment_group_3="راجع التفسيرين: حدد عبارة مطابقة للمصدر وعبارة تحتاج إلى تعديل، مع بيان السبب.",
         presentation_class="، ".join(context.class_sections) if context.class_sections else "",
         location=context.location,
         lesson_date=context.lesson_date,
         total_duration_minutes=total,
-        warm_up=f"اقرأ العبارة من الدرس: «{first_point}». ما المقصود بها؟ وما الدليل في النص؟",
+        warm_up="ما موضوع الدرس؟ اقرأ عنوانه وحدد سؤالًا تتوقع أن يجيب عنه النص. بعد القراءة راجع توقعك.",
         element_1_strategy=e1.teaching_strategy or "",
         element_1_time=e1.time_formatted,
-        element_1_summary=e1.brief_description or e1.title,
-        activity_1=_activity(1, act_minutes, f"تحليل النص: {first_point}", "استشهد بالمادة المرفوعة ولا تفترض معلومات غير مذكورة.", e1.teaching_strategy or ""),
+        element_1_summary=f"مقتطف المصدر الأول: {first_point}",
+        activity_1=_activity(1, act_minutes, "تفسير المقتطف الأول مع شاهد نصي.", "استشهد بالمادة المرفوعة ولا تفترض معلومات غير مذكورة.", e1.teaching_strategy or ""),
         element_2_strategy=e2.teaching_strategy or "",
         element_2_time=e2.time_formatted,
-        element_2_summary=e2.brief_description or e2.title,
-        activity_2=_activity(2, act_minutes, f"تفسير وتطبيق: {second_point}", "اربط الإجابة بالمثال الوارد في المصدر.", e2.teaching_strategy or ""),
+        element_2_summary=f"مقتطف المصدر الثاني: {second_point}",
+        activity_2=_activity(2, act_minutes, "تفسير المقتطف الثاني ومراجعة الدليل في مجموعة.", "اربط الإجابة بالمثال الوارد في المصدر.", e2.teaching_strategy or ""),
         rubric_group_1_header="المعرفة والفهم",
         rubric_group_1_items=[
-            f"يستخرج فكرة صحيحة من: {first_point}",
-            f"يفسر علاقة المعلومة بالمحتوى: {second_point}",
+            "تفسير المقتطف الأول يحافظ على المعنى",
+            "دليل نصي صحيح يدعم التفسير",
         ],
         rubric_group_2_header="المهارات والتطبيق",
         rubric_group_2_items=[
-            f"يقدّم مثالاً مستنداً إلى: {second_point}",
+            "تفسير المقتطف الثاني مرتبط بالنص دون إضافة غير موثقة",
             "يوضح موضع الدليل في النص ويعرض النتيجة",
         ],
         traceability=[
@@ -411,7 +420,12 @@ def build_rules_lesson_plan(
         ],
         missing_curriculum_notes=[RULES_MODE_LABEL_AR],
     )
-    return _enrich_questionnaire(_enrich_data_sourcing(payload, lesson), lesson)
+    payload = _enrich_questionnaire(_enrich_data_sourcing(payload, lesson), lesson)
+    # Visible in the printable plan, not just response metadata or web UI.
+    payload.warm_up = "مسودة بالقواعد؛ مقترحات لاعتماد المعلم. " + payload.warm_up
+    if not any("تكييف مقترح" in n for n in payload.missing_curriculum_notes):
+        payload.missing_curriculum_notes.append("خطة عامة لفهم مقتطفات المصدر، وليست شرحًا تخصصيًا أو ترجمة. يراجع المعلم ملاءمة الأنشطة والأهداف لمادته.")
+    return payload
 
 
 def _enrich_data_sourcing(payload: LessonPlanPayload, lesson: LessonBoundary) -> LessonPlanPayload:
@@ -483,7 +497,7 @@ def _enrich_questionnaire(payload: LessonPlanPayload, lesson: LessonBoundary) ->
     ]
     payload.warm_up = "توليد بالقواعد للمراجعة. تكييف مقترح لـ50 دقيقة. من المصدر: لماذا يتحيز سؤال أليس المقصف ممتازا؟ قارن بسؤال ما مدى رضاك عن المقصف؟"
     payload.element_1_summary = "الاستبيان لجمع بيانات البحث: تحديد الهدف والفئة، اختيار أنواع الأسئلة، تنظيمها ثم مراجعتها وتجريبها. الصدق يقيس المقصود والثبات اتساق النتائج."
-    payload.element_2_summary = "تصميم استبيان قصير محايد: وضوح اللغة، عدم التكرار، تحديد الوحدات، السرية وتجريب مجموعة صغيرة. أدوات المصدر: Google Forms / QuestionPro."
+    payload.element_2_summary = "تصميم استبيان قصير محايد: وضوح اللغة، عدم التكرار، تحديد الوحدات، السرية وتجريب مجموعة صغيرة. أدوات المصدر: Google Forms / QuestionPro"
     payload.activity_1.purpose = "تصنيف أربعة أسئلة وتحسين سؤال المقصف المتحيز."
     payload.activity_1.teacher_procedures = "يعرض أنواع أسئلة المصدر ومثال المقصف. يقدم أربعة أسئلة مقترحة: رأي مفتوح، نعم أو لا، اختيار متعدد، ومقياس رضا من واحد إلى خمسة."
     payload.activity_1.student_procedures = "يصنف الطالب الأسئلة الأربعة ويبرر كل تصنيف؛ يعيد صياغة سؤال المقصف بحياد ويقارن إجابتين مع زميله."
