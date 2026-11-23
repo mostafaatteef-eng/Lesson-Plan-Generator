@@ -160,6 +160,24 @@ def compute_visual_diff(
     return results, ref_count, gen_count
 
 
+def trailing_page_is_footer_only(pdf_bytes: bytes) -> bool:
+    """Detect an extra last page containing only a running footer/watermark.
+
+    Extract text positioned above the bottom 15% of the last page; legitimate
+    assessment content there is substantive, while a stray page number and
+    copyright notice are not. Used only to BLOCK accidental blank exports.
+    """
+    import fitz
+
+    with fitz.open(stream=pdf_bytes, filetype="pdf") as doc:
+        if len(doc) < 2:
+            return False
+        last = doc[-1]
+        upper = fitz.Rect(0, 0, last.rect.width, last.rect.height * 0.85)
+        body = last.get_text("text", clip=upper).strip()
+        return not bool(body)
+
+
 def run_four_pillar_qa(
     lesson: LessonBoundary,
     schema: TemplateSchema,
@@ -232,7 +250,8 @@ def run_four_pillar_qa(
     # geometry and content stay untouched). Fewer pages than expected still
     # means lost content and stays blocking.
     pages_exact = rendered_pages == expected_pages
-    pages_ok = expected_pages <= rendered_pages <= expected_pages + 1
+    trailing_blank = rendered_pages > expected_pages and trailing_page_is_footer_only(rendered_pdf_bytes)
+    pages_ok = expected_pages <= rendered_pages <= expected_pages + 1 and not trailing_blank
     p3 = _build_pillar(
         "template_fidelity",
         "Template Fidelity",
@@ -282,7 +301,7 @@ def run_four_pillar_qa(
                 gate_id="gate_page_count",
                 category="layout_deviation",
                 severity="blocking",
-                message=f"عدد صفحات الناتج ({rendered_pages}) يتجاوز قالب الاعتماد ({expected_pages}) بأكثر من صفحة أو يقل عنها.",
+                message=("الصفحة الأخيرة فارغة أو تحتوي تذييلًا فقط؛ يجب إصلاح قالب Word قبل التسليم." if trailing_blank else f"عدد صفحات الناتج ({rendered_pages}) لا يطابق سياسة القالب ({expected_pages})."),
             )
         )
     if vague_verbs:
