@@ -887,7 +887,9 @@ def inject_lesson_plan_xml_safe(
                     # 'الدرس ( ن <name> )' shape — only the placeholder name is
                     # replaced; the wide value cell carries the total time.
                     core_name = _core_lesson_name(payload.lesson_title)
-                    _set_cell_lines_xml_safe(tc, ["الدرس (١)"])
+                    match_number = re.search(r"(?:lesson|session|الدرس)\s*[:：]?\s*([0-9٠-٩]+)", payload.lesson_title, re.I)
+                    number = match_number.group(1) if match_number else "غير محدد"
+                    _set_cell_lines_xml_safe(tc, [f"الدرس ({number})"])
                     target = _content_tc_after(tcs, c_idx)
                     if target is not None:
                         write_tc(target, [core_name], "عنوان الدرس", 300)
