@@ -177,7 +177,7 @@ def detect_lesson_boundaries(pages: List[PageText], fallback_title: str) -> Tupl
                     word_count=len(all_text.split()),
                     confidence=0.55,
                     is_ambiguous=True,
-                    ambiguity_reason="No explicit lesson headings detected; grouped entire unit as Lesson 1.",
+                    ambiguity_reason="لم تُرصد عناوين دروس واضحة؛ جُمعت الوحدة كاملة كدرس واحد. راجع حدود الدروس قبل التوليد.",
                     approved=False,
                     key_concepts=extract_key_concepts(all_text),
                 )
@@ -206,7 +206,7 @@ def detect_lesson_boundaries(pages: List[PageText], fallback_title: str) -> Tupl
                 word_count=word_count,
                 confidence=0.68 if is_short else 0.94,
                 is_ambiguous=is_short,
-                ambiguity_reason="Short lesson extract (< 30 words); confirm start/end pages." if is_short else None,
+                ambiguity_reason="مقطع الدرس قصير (أقل من ٣٠ كلمة)؛ أكّد صفحتي البداية والنهاية." if is_short else None,
                 approved=not is_short,
                 key_concepts=extract_key_concepts(raw_text),
             )
