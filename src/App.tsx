@@ -14,6 +14,7 @@ import type {
   TemplateSchema,
 } from './types';
 import { STRINGS, type Lang } from './i18n';
+import { readSavedTemplate, saveTemplate, forgetTemplate } from './lib/templateCache';
 
 // Backend origin: build-time VITE_API_BASE_URL wins; otherwise default to the
 // deployed PythonAnywhere backend. The tool is open access: no credentials
@@ -127,39 +128,57 @@ export default function App() {
   useEffect(() => {
     let active = true;
 
-    // Built-in official template: ask the backend, and when available parse
-    // it once so generation needs only a curriculum upload.
-    fetch(apiUrl('/api/health'))
-      .then((res) => (res.ok ? res.json() : null))
-      .then(async (data) => {
+    // Restore previously approved files on this device before selecting server defaults.
+    // Never store curriculum content; only a teacher-selected DOCX template and reference PDF.
+    void (async () => {
+      const [savedDocx, savedReference] = await Promise.all([
+        readSavedTemplate('template').catch(() => null),
+        readSavedTemplate('reference').catch(() => null),
+      ]);
+      if (!active) return;
+      if (savedReference) {
+        setStagedRefPdf(savedReference);
+        setRefPdfSizeBytes(savedReference.size);
+      }
+      try {
+        const res = await fetch(apiUrl('/api/health'));
+        const health = res.ok ? await res.json().catch(() => null) : null;
         if (!active) return;
-        if (!data || data.status !== 'ok') {
+        if (!health || health.status !== 'ok') {
           setBackendState('offline');
           return;
         }
         setBackendState('online');
-        setBackendVersion(typeof data.version === 'string' ? data.version : null);
-        if (!data?.defaults?.template) return;
+        setBackendVersion(typeof health.version === 'string' ? health.version : null);
         setServerDefaults({
-          template: true,
-          reference_pdf: Boolean(data.defaults.reference_pdf),
+          template: Boolean(health.defaults?.template),
+          reference_pdf: Boolean(health.defaults?.reference_pdf),
         });
-        try {
-          const res = await fetch(apiUrl('/api/template/parse'), {
-            method: 'POST',
-            headers: authHeaders(),
-            body: new FormData(),
-          });
-          const parsed = res.ok ? ((await res.json().catch(() => null)) as TemplateSchema | null) : null;
-          if (active && parsed) setTemplate(parsed);
-        } catch {
-          // Built-in parse failed; teacher can still upload a template manually.
+        if (!savedDocx && !health.defaults?.template) return;
+        const fd = new FormData();
+        if (savedDocx) fd.append('docx', savedDocx);
+        if (savedReference) fd.append('reference_pdf', savedReference);
+        const parsedRes = await fetch(apiUrl('/api/template/parse'), {
+          method: 'POST', headers: authHeaders(), body: fd,
+        });
+        const parsed = parsedRes.ok
+          ? ((await parsedRes.json().catch(() => null)) as TemplateSchema | null)
+          : null;
+        if (active && parsed) {
+          setTemplate(parsed);
+          if (savedDocx) {
+            setTemplateFile(savedDocx);
+            setTemplateSizeBytes(savedDocx.size);
+          }
+        } else if (active && savedDocx) {
+          setTemplateError(lang === 'ar'
+            ? 'تعذرت استعادة النموذج المحفوظ. يمكنك اختياره مرة أخرى.'
+            : 'Could not restore the saved template. Select it again.');
         }
-      })
-      .catch(() => {
+      } catch {
         if (active) setBackendState('offline');
-        // Health endpoint unreachable; template upload stays required.
-      });
+      }
+    })();
 
     fetch(apiUrl('/api/settings'))
       .then((res) => (res.ok ? res.json() : null))
@@ -252,6 +271,8 @@ export default function App() {
       setTemplate(parsedTemplate);
       setTemplateFile(file);
       setTemplateSizeBytes(file.size);
+      // One successful upload is enough on this browser; persist across sessions.
+      void saveTemplate('template', file).catch(() => {});
       if (stagedRefPdf) {
         setRefPdfSizeBytes(stagedRefPdf.size);
       }
@@ -273,6 +294,8 @@ export default function App() {
     setTemplate(null);
     setTemplateFile(null);
     setTemplateSizeBytes(0);
+    void forgetTemplate('template').catch(() => {});
+    void forgetTemplate('reference').catch(() => {});
     setStagedRefPdf(null);
     setRefPdfSizeBytes(0);
     setGeneratedPlans([]);
@@ -302,6 +325,7 @@ export default function App() {
     if (!template) {
       setStagedRefPdf(file);
       setRefPdfSizeBytes(file.size);
+      void saveTemplate('reference', file).catch(() => {});
       return;
     }
 
@@ -327,6 +351,7 @@ export default function App() {
       setTemplate(data as TemplateSchema);
       setRefPdfSizeBytes(file.size);
       setStagedRefPdf(file);
+      void saveTemplate('reference', file).catch(() => {});
     } catch (err) {
       setRefPdfError(netMessage(err, t.errRefPdfUpload));
     } finally {
@@ -336,6 +361,7 @@ export default function App() {
 
   const handleRefPdfRemove = async () => {
     setRefPdfError(null);
+    void forgetTemplate('reference').catch(() => {});
     if (!template?.has_reference_pdf || (!templateFile && !serverDefaults.template)) {
       setStagedRefPdf(null);
       setRefPdfSizeBytes(0);
@@ -655,6 +681,11 @@ export default function App() {
         <main className="space-y-8">
           {/* SECTION B — File Upload Workspace */}
           <section aria-label="Document uploads" className="space-y-3">
+            <p className="text-[12px] text-[#53716B]" role="note">
+              {lang === 'ar'
+                ? 'احفظ نموذج Word ومرجع PDF مرة واحدة على هذا الجهاز؛ سيُستخدمان تلقائيًا في الزيارات التالية. يُرفع المنهج الجديد فقط.'
+                : 'Choose the Word template and reference PDF once on this device. They will load automatically next time; only the curriculum changes.'}
+            </p>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-stretch">
               <UploadCard
                 id="upload-curriculum"
