@@ -127,3 +127,49 @@ def test_existing_list_does_not_receive_duplicate_square_bullet():
     p = etree.fromstring('<w:p xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:pPr><w:numPr><w:numId w:val="15"/></w:numPr></w:pPr><w:r><w:t>old</w:t></w:r></w:p>')
     _set_paragraph_text_preserve_format(p, '▪ يصنف الطالب البيانات')
     assert ''.join(p.itertext()) == 'يصنف الطالب البيانات'
+
+
+def test_questionnaire_adaptation_requires_all_source_evidence():
+    from app.engines.rules_engine import _enrich_questionnaire
+    from types import SimpleNamespace
+    lesson = SimpleNamespace(raw_text='questionnaire target population open-ended closed-ended rating scale biased validity reliability Cronbach Google Forms QuestionPro canteen small group',start_page=1,end_page=14)
+    payload = SimpleNamespace(activity_1=SimpleNamespace(),activity_2=SimpleNamespace(),lesson_elements=[SimpleNamespace() for _ in range(5)],missing_curriculum_notes=[],traceability=[])
+    assert _enrich_questionnaire(payload,lesson) is payload
+    assert len(payload.learning_outcomes)==4
+    assert 'المقصف' in payload.learning_outcomes[2]
+    assert 'الثبات' in payload.learning_outcomes[3]
+    assert 'أربعة' in payload.activity_2.purpose
+    assert 'مقترحة' in payload.activity_1.student_note
+    assert 'للمراجعة' in payload.warm_up
+    assert len(payload.traceability)==8
+    assert all(item.verified_in_source for item in payload.traceability)
+    assert 'تمثيل العينة' in payload.missing_curriculum_notes[-1]
+    for missing in ['validity','cronbach','rating scale','canteen']:
+        partial=SimpleNamespace(raw_text=lesson.raw_text.lower().replace(missing,''))
+        blank=SimpleNamespace()
+        assert _enrich_questionnaire(blank,partial) is blank
+        assert not hasattr(blank,'learning_outcomes')
+
+
+def test_pptx_explicit_cover_metadata_is_single_lesson_not_ambiguous():
+    import io
+    from pptx import Presentation
+    from app.engines.curriculum_engine import ingest_curriculum
+    prs=Presentation()
+    for index in range(3):
+        slide=prs.slides.add_slide(prs.slide_layouts[6])
+        box=slide.shapes.add_textbox(0,0,1000000,1000000)
+        box.text_frame.text=('DATA ANALYSIS\nQuestionnaire Design\nGoogle Forms\nGRADE 1 & 2 · LESSON 3\nMS. Example' if index==0 else 'Questionnaire content ' * 50)
+    buf=io.BytesIO();prs.save(buf)
+    unit=ingest_curriculum(buf.getvalue(),'source.pptx')
+    assert unit.unit_title=='DATA ANALYSIS'
+    assert len(unit.lessons)==1
+    lesson=unit.lessons[0]
+    assert lesson.title=='DATA ANALYSIS - Questionnaire Design'
+    assert lesson.lesson_number==3
+    assert (lesson.start_page,lesson.end_page)==(1,3)
+    assert lesson.approved and not lesson.is_ambiguous
+    prs.slides[2].shapes[0].text_frame.text='LESSON 4\nA second lesson '
+    buf=io.BytesIO();prs.save(buf)
+    multi=ingest_curriculum(buf.getvalue(),'source.pptx')
+    assert multi.lessons[0].title!='DATA ANALYSIS - Questionnaire Design'
