@@ -21,7 +21,7 @@ import { readSavedTemplate, saveTemplate, forgetTemplate } from './lib/templateC
 // are requested from the teacher or embedded in the bundle.
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'https://mostafaatteef.pythonanywhere.com').replace(/\/$/, '');
 const apiUrl = (path: string) => `${API_BASE_URL}${path}`;
-const FRONTEND_RELEASE = '2026.11.23.4';
+const FRONTEND_RELEASE = '2026.11.23.5';
 
 export default function App() {
   // Institutional defaults & optional official uploaded EBDA logo
@@ -38,6 +38,7 @@ export default function App() {
 
   const [template, setTemplate] = useState<TemplateSchema | null>(null);
   const [showTemplateSettings, setShowTemplateSettings] = useState(false);
+  const [loadingTemplateDefaults, setLoadingTemplateDefaults] = useState(true);
   const [templateSizeBytes, setTemplateSizeBytes] = useState<number>(0);
   const [templateError, setTemplateError] = useState<string | null>(null);
   const [uploadingTemplate, setUploadingTemplate] = useState(false);
@@ -181,6 +182,8 @@ export default function App() {
         }
       } catch {
         if (active) setBackendState('offline');
+      } finally {
+        if (active) setLoadingTemplateDefaults(false);
       }
     })();
 
@@ -631,7 +634,9 @@ export default function App() {
     !uploadingRefPdf &&
     !isGenerating;
 
-  const readinessHint = !unit && !template
+  const readinessHint = loadingTemplateDefaults
+    ? (lang === 'ar' ? 'جارٍ تجهيز نموذج التحضير الرسمي.' : 'Preparing the official template.')
+    : !unit && !template
     ? t.readinessBoth
     : !unit
       ? t.readinessCurriculum
@@ -718,7 +723,12 @@ export default function App() {
                 </button>
               </div>
             )}
-            <div className={`grid grid-cols-1 ${!template || showTemplateSettings ? 'md:grid-cols-3' : ''} gap-4 items-stretch`}>
+            {loadingTemplateDefaults && (
+              <p role="status" className="text-[13px] text-[#53716B]">
+                {lang === 'ar' ? 'جارٍ تحميل نموذج التحضير الرسمي… يمكنك رفع المنهج الآن.' : 'Loading the official template… You can upload the curriculum now.'}
+              </p>
+            )}
+            <div className={`grid grid-cols-1 ${(!loadingTemplateDefaults && !template) || showTemplateSettings ? 'md:grid-cols-3' : ''} gap-4 items-stretch`}>
               <UploadCard
                 id="upload-curriculum"
                 title={t.curriculumTitle}
@@ -738,7 +748,7 @@ export default function App() {
                 t={t}
               />
 
-              {(!template || showTemplateSettings) && (<>
+              {((!loadingTemplateDefaults && !template) || showTemplateSettings) && (<>
               <UploadCard
                 id="upload-template"
                 title={t.templateTitle}
@@ -838,8 +848,13 @@ export default function App() {
               artifacts={planArtifacts}
               batchDownload={batchDownload}
               failures={generationFailures}
-              t={t}
+              t={{ ...t, qualityLabel: lang === 'ar' ? 'فحص البنية والتنسيق:' : 'Structure and layout checks:' }}
             />
+          )}
+          {generatedPlans.length > 0 && generationMode !== 'ai' && (
+            <p role="note" className="text-[13px] text-[#53716B]">
+              {lang === 'ar' ? 'هذه نتيجة مولدة بالقواعد وتحتاج مراجعة تعليمية من المعلم. نجاح فحص التنسيق لا يعني اعتماد المحتوى علميًا.' : 'Rules-based output requires teacher review. Passing layout checks does not certify instructional accuracy.'}
+            </p>
           )}
         </main>
       </div>
