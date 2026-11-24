@@ -384,48 +384,72 @@ def _run_generation_scoped(
     else:
         payload = build_rules_lesson_plan(unit, lesson, schema, ctx)
         generation_mode = "rules_fallback"
-    out_docx, metrics = inject_lesson_plan_xml_safe(template_docx, payload)
-    if metrics.get("injected_count", 0) == 0:
-        # Honest refusal: an unrecognized template must never come back as a
-        # valid-looking but actually empty "generated" plan.
-        return None, {
-            "lesson_id": lesson.lesson_id,
-            "lesson_title": lesson.title,
-            "detail": "القالب غير معروف: لم تطابق أي خانات قابلة للتعبئة، فلم تُنتج خطة. ارفع قالب التحضير الرسمي ATS-MU.",
-        }
-    out_pdf, lo_used = _render_pdf(out_docx)
-    if out_pdf is None:
-        # QA's visual pillars need the rendered PDF. Without it no honest
-        # verification happened, so this is a structured block, not a plan.
-        return None, {
-            "lesson_id": lesson.lesson_id,
-            "lesson_title": lesson.title,
-            "detail": "تعذّر إنتاج PDF للمعاينة وفحص الجودة على هذا الخادم، فلم تُنتج الخطة. حاول مجددًا لاحقًا.",
-            "qa_blocked": True,
-        }
+
+    def _inject_render_qa(current_payload: LessonPlanPayload):
+        out_docx, metrics = inject_lesson_plan_xml_safe(template_docx, current_payload)
+        if metrics.get("injected_count", 0) == 0:
+            # Honest refusal: an unrecognized template must never come back as a
+            # valid-looking but actually empty "generated" plan.
+            return None, (None, {
+                "lesson_id": lesson.lesson_id,
+                "lesson_title": lesson.title,
+                "detail": "القالب غير معروف: لم تطابق أي خانات قابلة للتعبئة، فلم تُنتج خطة. ارفع قالب التحضير الرسمي ATS-MU.",
+            })
+        out_pdf, lo_used = _render_pdf(out_docx)
+        if out_pdf is None:
+            # QA's visual pillars need the rendered PDF. Without it no honest
+            # verification happened, so this is a structured block, not a plan.
+            return None, (None, {
+                "lesson_id": lesson.lesson_id,
+                "lesson_title": lesson.title,
+                "detail": "تعذّر إنتاج PDF للمعاينة وفحص الجودة على هذا الخادم، فلم تُنتج الخطة. حاول مجددًا لاحقًا.",
+                "qa_blocked": True,
+            })
+        try:
+            qa: QAReport = run_four_pillar_qa(
+                lesson=lesson,
+                schema=schema,
+                payload=current_payload,
+                injection_metrics=metrics,
+                rendered_pdf_bytes=out_pdf or b"",
+                libreoffice_used=lo_used,
+                reference_pdf_bytes=ref_pdf_bytes,
+            )
+            qa_dict = qa.model_dump()
+        except Exception as exc:
+            # Fail closed: QA could not run, so nothing is verifiable. Return a
+            # structured block with no artifact bytes — never a plan with
+            # qa_report=None (the frontend cannot render that safely).
+            return None, (None, {
+                "lesson_id": lesson.lesson_id,
+                "lesson_title": lesson.title,
+                "detail": f"تعذّر إجراء فحص الجودة، فلم تُنتج الخطة. حاول مجددًا. ({exc})",
+                "qa_blocked": True,
+            })
+        return (out_docx, out_pdf, metrics, qa_dict), None
+
+    rendered, failure = _inject_render_qa(payload)
+    if rendered is not None:
+        # Page-fit retry: when the only blocking finding is the four-page guard
+        # on a rules-mode plan, rebuild once on the baseline question-card
+        # layout (no richer mechanics) and re-verify. The richer activity text
+        # is what can overflow the template; the baseline layout must not be
+        # sacrificed to keep it.
+        blocking = [g for g in rendered[3].get("approval_gates", []) if g.get("severity") == "blocking"]
+        page_count_only = blocking and all(g.get("gate_id") == "gate_page_count" for g in blocking)
+        if page_count_only and generation_mode == "rules_fallback":
+            compact_payload = build_rules_lesson_plan(unit, lesson, schema, ctx, allow_mechanics=False)
+            compact_rendered, compact_failure = _inject_render_qa(compact_payload)
+            if compact_rendered is not None:
+                compact_blocking = [g for g in compact_rendered[3].get("approval_gates", []) if g.get("severity") == "blocking"]
+                if not compact_blocking and compact_rendered[3].get("overall_status") != "fail":
+                    payload = compact_payload
+                    rendered = compact_rendered
+                # else: keep the original failure diagnostics below.
+    if failure is not None:
+        return None, failure[1]
+    out_docx, out_pdf, metrics, qa_dict = rendered
     qa_status = "ok"
-    qa_dict = None
-    try:
-        qa: QAReport = run_four_pillar_qa(
-            lesson=lesson,
-            schema=schema,
-            payload=payload,
-            injection_metrics=metrics,
-            rendered_pdf_bytes=out_pdf or b"",
-            libreoffice_used=lo_used,
-            reference_pdf_bytes=ref_pdf_bytes,
-        )
-        qa_dict = qa.model_dump()
-    except Exception as exc:
-        # Fail closed: QA could not run, so nothing is verifiable. Return a
-        # structured block with no artifact bytes — never a plan with
-        # qa_report=None (the frontend cannot render that safely).
-        return None, {
-            "lesson_id": lesson.lesson_id,
-            "lesson_title": lesson.title,
-            "detail": f"تعذّر إجراء فحص الجودة، فلم تُنتج الخطة. حاول مجددًا. ({exc})",
-            "qa_blocked": True,
-        }
 
     # Honest enforcement: a generation whose QA found blocking gates is not a
     # valid plan. It produces no artifact bytes and is reported as a failure

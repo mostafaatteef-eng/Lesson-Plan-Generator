@@ -867,7 +867,7 @@ def _mechanic_fields(mechanic, data, lesson):
 
 
 
-def _grounded_practice(payload: LessonPlanPayload, lesson: LessonBoundary) -> LessonPlanPayload:
+def _grounded_practice(payload: LessonPlanPayload, lesson: LessonBoundary, allow_mechanics: bool = True) -> LessonPlanPayload:
     """Build named tasks from the same verified targets as the outcomes.
 
     The task mechanics are a proposed teaching adaptation. Their subject matter
@@ -951,17 +951,19 @@ def _grounded_practice(payload: LessonPlanPayload, lesson: LessonBoundary) -> Le
     # Richer fixed mechanics, activated only by verified source material. The
     # cooperative element gets the first available mechanic; the individual
     # element gets the next distinct one, else both stay question cards.
+    # allow_mechanics=False rebuilds the baseline question-card layout when a
+    # mechanic-rich render overflowed the four-page template.
     mechanics = []
-    pairs = _definition_pairs(lesson)
+    pairs = _definition_pairs(lesson) if allow_mechanics else []
     if len(pairs) >= 3:
         mechanics.append(('match', pairs))
-    scenario = _scenario_span(lesson, [card[0] for card in cards] + [p[0] for p in pairs])
+    scenario = _scenario_span(lesson, [card[0] for card in cards] + [p[0] for p in pairs]) if allow_mechanics else None
     if scenario:
         mechanics.append(('scenario', scenario))
-    steps = _ordered_steps(lesson)
+    steps = _ordered_steps(lesson) if allow_mechanics else []
     if len(steps) >= 3:
         mechanics.append(('sequence', steps))
-    classified = _category_groups(lesson)
+    classified = _category_groups(lesson) if allow_mechanics else []
     if classified:
         mechanics.append(('classify', classified))
     assignment = {}
@@ -1080,6 +1082,7 @@ def build_rules_lesson_plan(
     lesson: LessonBoundary,
     schema: TemplateSchema,
     context: GenerationContext,
+    allow_mechanics: bool = True,
 ) -> LessonPlanPayload:
     excerpts = _pick_excerpts(lesson)
     core = _core_title(lesson.title)
@@ -1193,7 +1196,7 @@ def build_rules_lesson_plan(
     # Specialized, source-gated adaptations keep their established content.
     payload = _enrich_questionnaire(_enrich_data_sourcing(payload, lesson), lesson)
     if not any("تكييف مقترح" in note for note in payload.missing_curriculum_notes):
-        payload = _grounded_practice(payload, lesson)
+        payload = _grounded_practice(payload, lesson, allow_mechanics=allow_mechanics)
     else:
         _trace_specialized_practice(payload, lesson)
     if len(payload.learning_outcomes) < 3:
