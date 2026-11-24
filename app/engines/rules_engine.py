@@ -561,12 +561,320 @@ def _grounded_outcomes(lesson: LessonBoundary) -> tuple[List[str], List[Traceabi
                         verified_in_source=True))
     return outcomes, evidence
 
+# ---------------------------------------------------------------------------
+# Richer source-grounded activity mechanics.
+#
+# Each mechanic is a fixed teaching frame (match, sequence, classify, source
+# scenario) whose EVERY item is a verbatim, verified excerpt from the uploaded
+# lesson. A mechanic activates only when the source actually contains its raw
+# material; otherwise the question-card fallback stays. Items that fail
+# verbatim verification are dropped, and a mechanic with too few verified
+# items is not used at all, so nothing here invents subject matter.
+# ---------------------------------------------------------------------------
+
+# Instructional or referential words that are never matchable terms.
+_NON_TERMS = {
+    'first', 'second', 'third', 'fourth', 'example', 'examples', 'note',
+    'subject', 'dear', 'from', 'to', 'cc', 'date', 'topic', 'unit', 'lesson',
+    'chapter', 'exercise', 'question', 'answer', 'step', 'activity', 'figure',
+    'table', 'page', 'revision', 'objectives', 'definition', 'it', 'its',
+    'this', 'that', 'these', 'those', 'there', 'they', 'we', 'you', 'he',
+    'she', 'in', 'if', 'what', 'how', 'why', 'when', 'where', 'as', 'so',
+}
+
+
+def _clean_term(term: str) -> str:
+    term = term.strip(' :.-•▪').strip()
+    if not (2 <= len(term) <= 45) or not (1 <= len(term.split()) <= 6):
+        return ''
+    if not re.match(r'^[A-Z\u0621-\u064A]', term):
+        return ''
+    if term.split()[0].strip('.,').lower() in _NON_TERMS:
+        return ''
+    if re.search(r'lesson|chapter|rights|office|page|book|following|previous', term, re.I):
+        return ''
+    words = term.lower().split()
+    # Merged table/question lines are not terms: a repeated word or an
+    # embedded question/exercise verb means two columns stuck together.
+    if len(set(words)) < len(words):
+        return ''
+    if any(w in ('what', 'how', 'why', 'where', 'when', 'which', 'compare',
+                 'define', 'explain', 'state', 'give', 'mention') for w in words[1:]):
+        return ''
+    if words[-1].rstrip('.,') in ('&', 'and', 'or', 'the', 'a', 'an', 'of'):
+        return ''
+    return term
+
+
+def _verbatim_clip(sentence: str, budget: int, lesson) -> str:
+    """A clipped prefix kept only while it stays verbatim in the source."""
+    clipped = _clip(sentence.strip(), budget)
+    if len(clipped) < 20:
+        return ''
+    return clipped if _verify_excerpt(clipped, lesson.raw_text) else ''
+
+
+def _definition_pairs(lesson, limit: int = 4):
+    """Term + verbatim short definition pairs for a match activity.
+
+    Returns (term, clipped_definition, source_span) triples. The span covers
+    the term and its definition as they appear in the source; every element is
+    verified against the raw text before it is used anywhere.
+    """
+    pairs = []
+    seen = set()
+
+    def add(term: str, definition: str, span: str) -> None:
+        term = _clean_term(term)
+        if not term or term.casefold() in seen:
+            return
+        definition = re.sub(r'^(?:it\s+)?(?:is|are|refers to|means|هو|هي)\s+', '', definition.strip())
+        # A definition is its own first sentence; a following pronoun sentence
+        # ("It is a scalar quantity.") is not part of the definition text.
+        definition = re.split(r'(?<=[.!?])\s', definition)[0].rstrip('.!?').strip()
+        clipped = _verbatim_clip(definition, 60, lesson)
+        if not clipped:
+            return
+        span = _clip(re.sub(r'\s+', ' ', span).strip(), 180)
+        if not _verify_excerpt(span, lesson.raw_text):
+            span = clipped
+        seen.add(term.casefold())
+        pairs.append((term, clipped, span))
+
+    text = re.sub(r'\s+', ' ', lesson.raw_text)
+    # Explicit copula definitions: "Speed is the distance moved ..." style.
+    copula = re.compile(
+        r'\b((?:[Tt]he )?[A-Z][A-Za-z0-9()&/ -]{1,43}?)\s+'
+        r'((?:is|are|refers to|means)\s+(?:a |an |the |defined |called )[^.!?]{15,200})(?:[.!?]|$)')
+    for match in copula.finditer(text):
+        add(match.group(1), match.group(2), match.group(0))
+        if len(pairs) >= limit:
+            return pairs
+    # List rows "Term: description" (numbered, bulleted or plain).
+    row = re.compile(r'^\s*(?:\d+\s*[.)]\s*|[•▪-]\s+)?([A-Z][A-Za-z0-9()&/ -]{1,43}?)\s*:\s+(\S[^\n]{14,200}?)\s*$')
+    for line in lesson.raw_text.splitlines():
+        match = row.match(line)
+        if match:
+            add(match.group(1), match.group(2), match.group(0))
+        if len(pairs) >= limit:
+            return pairs
+    # Arabic copula definitions, one per line.
+    arabic = re.compile(r'^\s*([أ-ي][أ-ي ]{1,40}?)\s+(هو|هي)\s+([^.!؟\n]{14,160})', re.M)
+    for match in arabic.finditer(lesson.raw_text):
+        add(match.group(1), f"{match.group(2)} {match.group(3)}", match.group(0))
+        if len(pairs) >= limit:
+            return pairs
+    return pairs
+
+
+def _ordered_steps(lesson, limit: int = 5):
+    """Verbatim items of an explicit ordered enumeration (3+) in the source.
+
+    Numbered runs must start at 1 and stay sequential; a hyphen marker is
+    excluded so three-line unit tables (quantity / unit name / symbol) are not
+    mistaken for steps. Items that fail verbatim verification end the run.
+    """
+    lines = lesson.raw_text.splitlines()
+    best: List[str] = []
+    run: List[str] = []
+    expected = 1
+    for line in lines:
+        match = re.match(r'^\s*(\d+)\s*[.)]\s+(.{10,140}?)\s*$', line)
+        if match and int(match.group(1)) == expected:
+            item = match.group(2).strip()
+            clipped = _verbatim_clip(item, 60, lesson)
+            if len(item.split()) >= 3 and clipped:
+                run.append(clipped)
+                expected += 1
+                continue
+        if match and int(match.group(1)) == 1:
+            run = []
+            expected = 1
+            item = match.group(2).strip()
+            clipped = _verbatim_clip(item, 60, lesson)
+            if len(item.split()) >= 3 and clipped:
+                run.append(clipped)
+                expected = 2
+            continue
+        if not line.strip():
+            continue
+        if len(run) >= 3:
+            best = run
+            break
+        run = []
+        expected = 1
+    else:
+        if len(run) >= 3:
+            best = run
+    if len(best) < 3:
+        inline = re.search(
+            r'First\s*:\s*(.{10,140}?)[.;]\s*Second\s*:\s*(.{10,140}?)[.;]\s*Third\s*:\s*(.{10,140}?)(?:[.;]|$)',
+            re.sub(r'\s+', ' ', lesson.raw_text), re.I)
+        if inline:
+            best = [c for c in (_verbatim_clip(g, 90, lesson) for g in inline.groups()) if c]
+    return best[:limit] if len(best) >= 3 else []
+
+
+def _category_groups(lesson, limit: int = 4):
+    """Few-to-many category assignments stated explicitly in the source.
+
+    Only direct "Term is a Category." membership sentences qualify; the
+    category must be a short noun phrase shared by at least two groups, and
+    every membership sentence is verified verbatim. Returns
+    (category, [(term, span), ...]) entries or None.
+    """
+    text = re.sub(r'\s+', ' ', lesson.raw_text)
+    membership = re.compile(
+        r'\b([A-Z][A-Za-z0-9()&/ -]{1,40}?)\s+(?:is|are)\s+(?:a |an )([a-z][a-z -]{2,35})[.!?]')
+    candidates = []
+    for match in membership.finditer(text):
+        candidates.append((match.group(1), match.group(2), match.group(0)))
+    # Two-sentence form common in the physics book: "Speed: is the distance
+    # moved ... . It is a scalar quantity." The pronoun refers to the term.
+    pronoun = re.compile(
+        r'\b([A-Z][A-Za-z0-9()&/ -]{1,40}?)\s*:\s*is\s+[^.!?]{10,160}?[.!?]\s*It is (?:a |an )([a-z][a-z -]{2,35})[.!?]')
+    for match in pronoun.finditer(text):
+        candidates.append((match.group(1), match.group(2), match.group(0)))
+    groups = {}
+    for raw_term, raw_category, span in candidates:
+        term = _clean_term(raw_term)
+        category = raw_category.strip()
+        span = span.strip()
+        if not term or not (1 <= len(category.split()) <= 3):
+            continue
+        if not _verify_excerpt(span, lesson.raw_text):
+            continue
+        bucket = groups.setdefault(category, [])
+        if term not in [t for t, _ in bucket]:
+            bucket.append((term, span))
+    groups = {c: items for c, items in groups.items() if items}
+    if len(groups) < 2 or sum(len(items) for items in groups.values()) < 3:
+        return None
+    selected = []
+    remaining = limit
+    for category, items in list(groups.items())[:3]:
+        take = items[:max(1, min(2, remaining))]
+        selected.append((category, take))
+        remaining -= len(take)
+        if remaining <= 0:
+            break
+    return selected
+
+
+_SCENARIO_MARKER = re.compile(
+    r'for example|for instance|imagine|suppose|scenario|case study|على سبيل المثال|تخيل|افترض',
+    re.I)
+
+
+def _scenario_span(lesson, terms, budget: int = 200):
+    """The source's own worked example/scenario plus concepts visible in it.
+
+    Gated on an explicit example marker; the block is a verbatim clip of the
+    marked sentences and at least two lesson concepts must literally appear in
+    it. Returns (block, located_terms) or None.
+    """
+    text = re.sub(r'\s+', ' ', lesson.raw_text)
+    marker = _SCENARIO_MARKER.search(text)
+    if not marker:
+        return None
+    sentences = _split_sentences(text[marker.start():])
+    if not sentences:
+        return None
+    block = _clip('. '.join(sentences[:3]), budget)
+    if len(block) < 60 or not _verify_excerpt(block, lesson.raw_text):
+        return None
+    located = []
+    for term in terms:
+        base = re.sub(r'^(?:[Tt]he |[Aa]n? )', '', str(term)).strip(' .،:')
+        if len(base) >= 3 and re.search(re.escape(base), block, re.I) and term not in located:
+            located.append(term)
+    if len(located) < 2:
+        return None
+    return block, located[:3]
+
+
+_MECH_AR = {
+    'match': 'التوصيل',
+    'sequence': 'الترتيب',
+    'classify': 'التصنيف',
+    'scenario': 'الموقف التطبيقي',
+}
+_AR_LETTERS = ['أ', 'ب', 'ج', 'د', 'ه']
+
+
+def _scrambled(items):
+    """A deterministic non-identity presentation order for verified items."""
+    return list(reversed(items)) if len(items) > 1 else list(items)
+
+
+def _mechanic_fields(mechanic, data, lesson):
+    """Activity texts for one mechanic; every listed item is a verified excerpt."""
+    if mechanic == 'match':
+        pairs = list(data)[:3]
+
+        def procedures(chosen):
+            terms = '، '.join(t for t, _, _ in chosen)
+            defs = '؛ '.join(d for _, d, _ in _scrambled(chosen))
+            return ("يطابق {actor} كل مصطلح بالتعريف المناسب له من الدرس. "
+                    f"العمود أ: {terms}. العمود ب (بترتيب مختلف): {defs}.")
+
+        while len(pairs) > 3 and len(procedures(pairs)) > 300:
+            pairs.pop()
+        return {
+            'purpose': f"نشاط مقترح (توصيل): مطابقة {len(pairs)} مصطلحات بتعريفاتها كما وردت في الدرس.",
+            'teacher_procedures': "يكتب المصطلحات في عمود والتعريفات بترتيب مختلف في عمود آخر، ويطلب مطابقة كل مصطلح بتعريفه، ثم يصحح بالرجوع إلى مواضع التعريفات في الدرس.",
+            'student_procedures': procedures(pairs),
+            'student_note': "الناتج: جدول مطابقة مكتمل. النجاح: كل مطابقة تطابق تعريف المصدر دون تخمين.",
+            'rubric': ["مطابقة كل مصطلح بالتعريف الصحيح وفق المصدر", "تحديد موضع كل تعريف في الدرس"],
+            'spans': [span for _, _, span in pairs],
+        }
+    if mechanic == 'sequence':
+        steps = list(data)[:4]
+        items = ' '.join(f"({_AR_LETTERS[i]}) {step}" for i, step in enumerate(_scrambled(steps)))
+        return {
+            'purpose': f"نشاط مقترح (ترتيب): إعادة ترتيب {len(steps)} عناصر كما تسلسلت في الدرس.",
+            'teacher_procedures': "يعرض العناصر بترتيب مخالف لتسلسلها في الدرس ويطلب إعادة ترتيبها وترقيمها، ثم يصحح بالرجوع إلى تسلسل المصدر.",
+            'student_procedures': f"يرتب {{actor}} العناصر التالية كما وردت في الدرس ويرقمها: {items}.",
+            'student_note': "الناتج: تسلسل مرقم. النجاح: تطابق الترتيب مع تسلسل الدرس.",
+            'rubric': ["ترتيب العناصر مطابق لتسلسل المصدر", "تحديد موضع التسلسل في الدرس"],
+            'spans': steps,
+        }
+    if mechanic == 'classify':
+        groups = data
+        categories = [c for c, _ in groups]
+        terms = [t for _, items in groups for t, _ in items]
+        cats_text = ' و'.join(f"«{c}»" for c in categories)
+        terms_text = '، '.join(_scrambled(terms))
+        return {
+            'purpose': f"نشاط مقترح (تصنيف): توزيع {len(terms)} مصطلحات على الفئات المذكورة في الدرس.",
+            'teacher_procedures': f"يعرض فئات الدرس {cats_text} ويطلب توزيع المصطلحات عليها مع ذكر العبارة الدالة، ثم يصحح بالرجوع إلى المصدر.",
+            'student_procedures': f"يصنف {{actor}} المصطلحات التالية إلى {cats_text} كما يحددها الدرس: {terms_text}.",
+            'student_note': "الناتج: جدول تصنيف. النجاح: كل مصطلح في فئته وفق عبارة المصدر.",
+            'rubric': ["كل مصطلح في الفئة الصحيحة وفق المصدر", "ذكر العبارة الدالة من الدرس"],
+            'spans': [span for _, items in groups for _, span in items],
+        }
+    # scenario
+    block, located = data
+    terms_text = '، '.join(str(t).strip(' .،:') for t in located)
+    return {
+        'purpose': "نشاط مقترح (موقف تطبيقي من الدرس): تتبع المفاهيم في الموقف الوارد بالنص.",
+        'teacher_procedures': "يعرض الموقف كما ورد في الدرس ويطلب تحديد موضع كل مفهوم ودوره فيه، ثم يصحح بالرجوع إلى عبارات النص.",
+        'student_procedures': f"يقرأ {{actor}} الموقف الوارد في الدرس: «{block}» ثم يحدد أين يظهر كل مفهوم مما يلي ويشرح دوره كما يستخدمه النص: {terms_text}.",
+        'student_note': "الناتج: جدول مفهوم/موضعه/دوره في الموقف. النجاح: كل إجابة مستندة إلى عبارة من الموقف نفسه.",
+        'rubric': ["تحديد مواضع المفاهيم في الموقف بدقة", "شرح الدور مستندا إلى عبارة من النص"],
+        'spans': [block],
+    }
+
+
 
 def _grounded_practice(payload: LessonPlanPayload, lesson: LessonBoundary) -> LessonPlanPayload:
     """Build named tasks from the same verified targets as the outcomes.
 
     The task mechanics are a proposed teaching adaptation. Their subject matter
-    and answer criteria come only from each target's own source evidence.
+    and answer criteria come only from each target's own source evidence. When
+    the source contains the raw material for a richer fixed mechanic (match,
+    sequence, classify, or its own worked scenario), that mechanic replaces the
+    question card; every one of its items is a verified verbatim excerpt.
     """
     cards = []
     entries = {e.field_key: e for e in payload.traceability}
@@ -639,24 +947,73 @@ def _grounded_practice(payload: LessonPlanPayload, lesson: LessonBoundary) -> Le
                     field_key=field, field_label="دليل المهمة ومعيار الإجابة",
                     supporting_excerpt=entry.supporting_excerpt,
                     source_pages=entry.source_pages, verified_in_source=True))
+
+    # Richer fixed mechanics, activated only by verified source material. The
+    # cooperative element gets the first available mechanic; the individual
+    # element gets the next distinct one, else both stay question cards.
+    mechanics = []
+    pairs = _definition_pairs(lesson)
+    if len(pairs) >= 3:
+        mechanics.append(('match', pairs))
+    scenario = _scenario_span(lesson, [card[0] for card in cards] + [p[0] for p in pairs])
+    if scenario:
+        mechanics.append(('scenario', scenario))
+    steps = _ordered_steps(lesson)
+    if len(steps) >= 3:
+        mechanics.append(('sequence', steps))
+    classified = _category_groups(lesson)
+    if classified:
+        mechanics.append(('classify', classified))
+    assignment = {}
+    if mechanics:
+        assignment[2] = mechanics[0]
+    if len(mechanics) > 1:
+        assignment[1] = mechanics[1]
+
     for num, group in enumerate(groups, 1):
         activity = getattr(payload, f"activity_{num}")
         targets = ' / '.join(card[0] for card in group)
         activity.activity_type = "أخرى"
-        activity.purpose = f"بطاقة مقترحة: {targets}."
-        activity.teacher_procedures = f"يطرح: {questions(group)} يصحح الإجابات من مواضعها في الدرس."
         actor = "الطالب" if num == 1 else "أفراد المجموعة"
-        activity.student_procedures = f"يجيب {actor} عن الأسئلة المحددة، مع موضع الدليل، ثم يصحح الإجابة بعد المراجعة."
-        activity.student_note = "الناتج: بطاقة إجابة للأسئلة المحددة أعلاه. النجاح: إجابة صحيحة لكل سؤال مع موضع الدليل."
-        setattr(payload, f"element_{num}_summary", f"مفاهيم الدرس المستهدفة: {targets}. المطلوب: التعريف أو القائمة أو الوحدة كما يحدد سؤال النشاط أدناه.")
-        for subfield in ['purpose','teacher_procedures','student_procedures','student_note']:
-            evidence_for(f"activity_{num}.{subfield}", group)
+        if num in assignment:
+            mechanic, data = assignment[num]
+            fields = _mechanic_fields(mechanic, data, lesson)
+            activity.purpose = fields['purpose']
+            activity.teacher_procedures = fields['teacher_procedures']
+            activity.student_procedures = fields['student_procedures'].replace('{actor}', actor)
+            activity.student_note = fields['student_note']
+            spans = [s for s in fields['spans'] if _verify_excerpt(s, lesson.raw_text)]
+            for subfield in ['purpose', 'teacher_procedures', 'student_procedures', 'student_note']:
+                for span in spans:
+                    payload.traceability.append(TraceabilityEntry(
+                        field_key=f"activity_{num}.{subfield}",
+                        field_label="دليل النشاط ومعيار الإجابة",
+                        supporting_excerpt=span,
+                        source_pages=list(range(lesson.start_page, lesson.end_page + 1)),
+                        verified_in_source=True))
+            setattr(payload, f"rubric_group_{num}_items", fields['rubric'])
+            for i in range(len(fields['rubric'])):
+                for span in spans:
+                    payload.traceability.append(TraceabilityEntry(
+                        field_key=f"rubric_group_{num}_items.{i}",
+                        field_label="دليل معيار التقويم",
+                        supporting_excerpt=span,
+                        source_pages=list(range(lesson.start_page, lesson.end_page + 1)),
+                        verified_in_source=True))
+        else:
+            activity.purpose = f"بطاقة مقترحة: {targets}."
+            activity.teacher_procedures = f"يطرح: {questions(group)} يصحح الإجابات من مواضعها في الدرس."
+            activity.student_procedures = f"يجيب {actor} عن الأسئلة المحددة، مع موضع الدليل، ثم يصحح الإجابة بعد المراجعة."
+            activity.student_note = "الناتج: بطاقة إجابة للأسئلة المحددة أعلاه. النجاح: إجابة صحيحة لكل سؤال مع موضع الدليل."
+            for subfield in ['purpose','teacher_procedures','student_procedures','student_note']:
+                evidence_for(f"activity_{num}.{subfield}", group)
+            setattr(payload, f"rubric_group_{num}_items", [card[2] for card in group])
+            for i, card in enumerate(group):
+                evidence_for(f"rubric_group_{num}_items.{i}", [card])
+        setattr(payload, f"element_{num}_summary", f"مفاهيم الدرس المستهدفة: {targets}. المطلوب: التعريف أو القائمة أو الوحدة كما يحدد نشاط العنصر أدناه.")
         evidence_for(f"element_{num}_summary", group)
         evidence_for(f"assessment_group_{num}", group)
         setattr(payload, f"assessment_group_{num}", questions(group))
-        setattr(payload, f"rubric_group_{num}_items", [card[2] for card in group])
-        for i, card in enumerate(group):
-            evidence_for(f"rubric_group_{num}_items.{i}", [card])
     payload.assessment_group_3 = "بطاقة خروج دون الرجوع للنص: " + cards[-1][1]
     evidence_for('assessment_group_3', [cards[-1]])
     payload.warm_up = "تكييف تدريسي مقترح من مفاهيم الدرس. سؤال تمهيدي: " + cards[0][1]
@@ -666,8 +1023,13 @@ def _grounded_practice(payload: LessonPlanPayload, lesson: LessonBoundary) -> Le
     for i, (element, summary) in enumerate(zip(payload.lesson_elements, summaries)):
         element.brief_description = summary
         evidence_for(f"lesson_elements.{i}.brief_description", [cards[0]] if i == 0 else groups[0] if i in (1,3) else groups[1] if i == 2 else [cards[-1]])
-    payload.missing_curriculum_notes.append(
-        "تكييف مقترح: توزيع الأهداف على بطاقتي إجابة والمراجعة الفردية والجماعية من إعداد المحرك؛ المفاهيم ومعايير الإجابة من الدرس، وليست تجربة عملية أو شرحا مولدا بالذكاء الاصطناعي.")
+    if mechanics:
+        labels = ' و'.join(dict.fromkeys(_MECH_AR[m] for m, _ in mechanics))
+        payload.missing_curriculum_notes.append(
+            f"تكييف مقترح: صيغت أنشطة {labels} بعناصر منصوصة حرفيا في الدرس، والتنظيم التدريسي من إعداد المحرك ويحتاج مراجعة المعلم؛ المفاهيم ومعايير الإجابة من الدرس، وليست تجربة عملية أو شرحا مولدا بالذكاء الاصطناعي.")
+    else:
+        payload.missing_curriculum_notes.append(
+            "تكييف مقترح: توزيع الأهداف على بطاقتي إجابة والمراجعة الفردية والجماعية من إعداد المحرك؛ المفاهيم ومعايير الإجابة من الدرس، وليست تجربة عملية أو شرحا مولدا بالذكاء الاصطناعي.")
     return payload
 
 

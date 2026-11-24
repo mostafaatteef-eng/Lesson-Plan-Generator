@@ -419,3 +419,115 @@ def test_new_cards_are_bounded_to_matching_lesson_title():
     from types import SimpleNamespace
     lesson=SimpleNamespace(title='Unrelated lesson',raw_text='Progress reports are documents that track the status and development of a project.')
     assert source_cards(lesson)==[]
+
+
+def test_match_and_sequence_mechanics_use_only_verified_items():
+    from types import SimpleNamespace
+    from app.engines.rules_engine import (_definition_pairs, _ordered_steps,
+        _grounded_outcomes, _grounded_practice)
+    source = ('Speed is the distance moved by an object per unit time.\n'
+              'Velocity is the displacement of an object per unit time.\n'
+              'Acceleration is the change of the object velocity per unit time.\n'
+              '1. Collect the measurements from the instruments carefully.\n'
+              '2. Record each reading in the results table immediately.\n'
+              '3. Compare the readings with the expected values together.\n')
+    lesson = SimpleNamespace(raw_text=source, start_page=1, end_page=1, key_concepts=[], title='Lesson')
+    pairs = _definition_pairs(lesson)
+    assert [t for t, _, _ in pairs] == ['Speed', 'Velocity', 'Acceleration']
+    steps = _ordered_steps(lesson)
+    assert len(steps) == 3
+    norm = ' '.join(source.split())
+    for term, definition, span in pairs:
+        assert ' '.join(definition.split()) in norm
+        assert ' '.join(span.split()) in norm
+    outcomes, evidence = _grounded_outcomes(lesson)
+    payload = SimpleNamespace(learning_outcomes=outcomes, traceability=list(evidence),
+        activity_1=SimpleNamespace(), activity_2=SimpleNamespace(),
+        lesson_elements=[SimpleNamespace() for _ in range(5)], missing_curriculum_notes=[])
+    p = _grounded_practice(payload, lesson)
+    # The cooperative element takes the first mechanic; the individual one the next.
+    assert '(توصيل)' in p.activity_2.purpose
+    assert '(ترتيب)' in p.activity_1.purpose
+    # Every presented item is verbatim source text.
+    for term, definition, _ in pairs:
+        assert term in p.activity_2.student_procedures
+        assert definition in p.activity_2.student_procedures
+    for step in steps:
+        assert step in p.activity_1.student_procedures
+    assert all(e.verified_in_source for e in p.traceability)
+    assert all(' '.join(e.supporting_excerpt.split()) in norm for e in p.traceability)
+    # Items stay inside the printable budget.
+    assert len(p.activity_1.student_procedures) <= 320
+    assert len(p.activity_2.student_procedures) <= 320
+
+
+def test_classify_and_scenario_mechanics_are_source_gated():
+    from types import SimpleNamespace
+    from app.engines.rules_engine import (_category_groups, _scenario_span,
+        _grounded_outcomes, _grounded_practice)
+    cat_source = ('Copper is a good conductor. Rubber is an insulator. Wood is an insulator.\n'
+                  'A conductor is a material that allows charge to pass through it easily.\n'
+                  'An insulator is a material that resists the flow of charge through it.\n'
+                  'The school workshop uses both groups in wiring projects safely every day.\n')
+    lesson = SimpleNamespace(raw_text=cat_source, start_page=1, end_page=1, key_concepts=[], title='Lesson')
+    groups = _category_groups(lesson)
+    assert groups is not None
+    cats = {c: [t for t, _ in items] for c, items in groups}
+    assert cats.get('insulator') == ['Rubber', 'Wood']
+    assert any('Copper' in v for v in cats.values())
+    outcomes, evidence = _grounded_outcomes(lesson)
+    payload = SimpleNamespace(learning_outcomes=outcomes, traceability=list(evidence),
+        activity_1=SimpleNamespace(), activity_2=SimpleNamespace(),
+        lesson_elements=[SimpleNamespace() for _ in range(5)], missing_curriculum_notes=[])
+    p = _grounded_practice(payload, lesson)
+    norm = ' '.join(cat_source.split())
+    assert any('(تصنيف)' in a.purpose or '(توصيل)' in a.purpose
+               for a in (p.activity_1, p.activity_2))
+    assert all(e.verified_in_source for e in p.traceability)
+    assert all(' '.join(e.supporting_excerpt.split()) in norm for e in p.traceability)
+
+    scen_source = ('Structured logging helps operators trace requests across services reliably.\n'
+                   'A trace identifier is a unique value attached to every request in the system.\n'
+                   'A log pipeline is a chain that collects, parses and stores log records.\n'
+                   'A retry policy is a rule that repeats failed requests with increasing delays.\n'
+                   'For example, a small clinic application stores every trace identifier in its log '
+                   'pipeline so that the administrator can investigate a failed payment quickly.\n')
+    s_lesson = SimpleNamespace(raw_text=scen_source, start_page=1, end_page=1, key_concepts=[], title='Lesson')
+    found = _scenario_span(s_lesson, ['A trace identifier', 'A log pipeline', 'A retry policy'])
+    assert found is not None
+    block, located = found
+    assert ' '.join(block.split()) in ' '.join(scen_source.split())
+    assert located == ['A trace identifier', 'A log pipeline']
+    # No example marker -> no scenario activity.
+    assert _scenario_span(lesson, ['Copper', 'Rubber']) is None
+
+
+def test_mechanics_never_fabricate_and_cards_remain_the_fallback():
+    from types import SimpleNamespace
+    from app.engines.rules_engine import (_definition_pairs, _ordered_steps,
+        _category_groups, _scenario_span, _grounded_outcomes, _grounded_practice)
+    bare = SimpleNamespace(raw_text='An unsupported remark about daily classroom routines. ' * 8,
+                           start_page=1, end_page=1, key_concepts=[], title='Lesson')
+    assert _definition_pairs(bare) == []
+    assert _ordered_steps(bare) == []
+    assert _category_groups(bare) is None
+    assert _scenario_span(bare, ['x', 'y']) is None
+    # Unit-table lines are not mistaken for ordered steps.
+    table = SimpleNamespace(raw_text='1- Mass (m)\nkilogram\nkg\n2- Length (l)\nmeter\nm\n3- Time (t)\nsecond\ns\n',
+                            start_page=1, end_page=1, key_concepts=[], title='Lesson')
+    assert _ordered_steps(table) == []
+    # A lesson without mechanic material keeps the question-card activities.
+    card_source = ('Measurement is the process of comparing a quantity with its unit.\n'
+                   'The fundamental unit of length is defined to be one meter.\n'
+                   'The fundamental unit of mass is defined as one kilogram.\n')
+    c_lesson = SimpleNamespace(raw_text=card_source, start_page=1, end_page=1, key_concepts=[], title='Lesson')
+    outcomes, evidence = _grounded_outcomes(c_lesson)
+    payload = SimpleNamespace(learning_outcomes=outcomes, traceability=list(evidence),
+        activity_1=SimpleNamespace(), activity_2=SimpleNamespace(),
+        lesson_elements=[SimpleNamespace() for _ in range(5)], missing_curriculum_notes=[])
+    p = _grounded_practice(payload, c_lesson)
+    # Three definitions activate the match mechanic on the cooperative element;
+    # the individual element keeps the question card.
+    assert '(توصيل)' in p.activity_2.purpose
+    assert 'بطاقة مقترحة' in p.activity_1.purpose
+    assert any('التوصيل' in note for note in p.missing_curriculum_notes)
