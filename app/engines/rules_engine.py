@@ -632,7 +632,7 @@ def _definition_pairs(lesson, limit: int = 4):
         # A definition is its own first sentence; a following pronoun sentence
         # ("It is a scalar quantity.") is not part of the definition text.
         definition = re.split(r'(?<=[.!?])\s', definition)[0].rstrip('.!?').strip()
-        clipped = _verbatim_clip(definition, 60, lesson)
+        clipped = _verbatim_clip(definition, 45, lesson)
         if not clipped:
             return
         span = _clip(re.sub(r'\s+', ' ', span).strip(), 180)
@@ -682,7 +682,7 @@ def _ordered_steps(lesson, limit: int = 5):
         match = re.match(r'^\s*(\d+)\s*[.)]\s+(.{10,140}?)\s*$', line)
         if match and int(match.group(1)) == expected:
             item = match.group(2).strip()
-            clipped = _verbatim_clip(item, 60, lesson)
+            clipped = _verbatim_clip(item, 50, lesson)
             if len(item.split()) >= 3 and clipped:
                 run.append(clipped)
                 expected += 1
@@ -691,7 +691,7 @@ def _ordered_steps(lesson, limit: int = 5):
             run = []
             expected = 1
             item = match.group(2).strip()
-            clipped = _verbatim_clip(item, 60, lesson)
+            clipped = _verbatim_clip(item, 50, lesson)
             if len(item.split()) >= 3 and clipped:
                 run.append(clipped)
                 expected = 2
@@ -766,7 +766,7 @@ _SCENARIO_MARKER = re.compile(
     re.I)
 
 
-def _scenario_span(lesson, terms, budget: int = 200):
+def _scenario_span(lesson, terms, budget: int = 130):
     """The source's own worked example/scenario plus concepts visible in it.
 
     Gated on an explicit example marker; the block is a verbatim clip of the
@@ -815,10 +815,10 @@ def _mechanic_fields(mechanic, data, lesson):
         def procedures(chosen):
             terms = '، '.join(t for t, _, _ in chosen)
             defs = '؛ '.join(d for _, d, _ in _scrambled(chosen))
-            return ("يطابق {actor} كل مصطلح بالتعريف المناسب له من الدرس. "
-                    f"العمود أ: {terms}. العمود ب (بترتيب مختلف): {defs}.")
+            return ("يطابق {actor} كل مصطلح بتعريفه من الدرس. "
+                    f"أ: {terms}. ب (مختلط): {defs}.")
 
-        while len(pairs) > 3 and len(procedures(pairs)) > 300:
+        while len(pairs) > 3 and len(procedures(pairs)) > 250:
             pairs.pop()
         return {
             'purpose': f"نشاط مقترح (توصيل): مطابقة {len(pairs)} مصطلحات بتعريفاتها كما وردت في الدرس.",
@@ -859,7 +859,7 @@ def _mechanic_fields(mechanic, data, lesson):
     return {
         'purpose': "نشاط مقترح (موقف تطبيقي من الدرس): تتبع المفاهيم في الموقف الوارد بالنص.",
         'teacher_procedures': "يعرض الموقف كما ورد في الدرس ويطلب تحديد موضع كل مفهوم ودوره فيه، ثم يصحح بالرجوع إلى عبارات النص.",
-        'student_procedures': f"يقرأ {{actor}} الموقف الوارد في الدرس: «{block}» ثم يحدد أين يظهر كل مفهوم مما يلي ويشرح دوره كما يستخدمه النص: {terms_text}.",
+        'student_procedures': f"يقرأ {{actor}} الموقف من الدرس: «{block}» ثم يحدد موضع كل مفهوم ودوره فيه: {terms_text}.",
         'student_note': "الناتج: جدول مفهوم/موضعه/دوره في الموقف. النجاح: كل إجابة مستندة إلى عبارة من الموقف نفسه.",
         'rubric': ["تحديد مواضع المفاهيم في الموقف بدقة", "شرح الدور مستندا إلى عبارة من النص"],
         'spans': [block],
