@@ -593,6 +593,16 @@ def _clean_term(term: str) -> str:
         return ''
     if re.search(r'lesson|chapter|rights|office|page|book|following|previous', term, re.I):
         return ''
+    words = term.lower().split()
+    # Merged table/question lines are not terms: a repeated word or an
+    # embedded question/exercise verb means two columns stuck together.
+    if len(set(words)) < len(words):
+        return ''
+    if any(w in ('what', 'how', 'why', 'where', 'when', 'which', 'compare',
+                 'define', 'explain', 'state', 'give', 'mention') for w in words[1:]):
+        return ''
+    if words[-1].rstrip('.,') in ('&', 'and', 'or', 'the', 'a', 'an', 'of'):
+        return ''
     return term
 
 
@@ -618,11 +628,11 @@ def _definition_pairs(lesson, limit: int = 4):
         term = _clean_term(term)
         if not term or term.casefold() in seen:
             return
-        definition = re.sub(r'^(?:is|are|refers to|means|هو|هي)\s+', '', definition.strip())
+        definition = re.sub(r'^(?:it\s+)?(?:is|are|refers to|means|هو|هي)\s+', '', definition.strip())
         # A definition is its own first sentence; a following pronoun sentence
         # ("It is a scalar quantity.") is not part of the definition text.
         definition = re.split(r'(?<=[.!?])\s', definition)[0].rstrip('.!?').strip()
-        clipped = _verbatim_clip(definition, 95, lesson)
+        clipped = _verbatim_clip(definition, 60, lesson)
         if not clipped:
             return
         span = _clip(re.sub(r'\s+', ' ', span).strip(), 180)
@@ -672,7 +682,7 @@ def _ordered_steps(lesson, limit: int = 5):
         match = re.match(r'^\s*(\d+)\s*[.)]\s+(.{10,140}?)\s*$', line)
         if match and int(match.group(1)) == expected:
             item = match.group(2).strip()
-            clipped = _verbatim_clip(item, 90, lesson)
+            clipped = _verbatim_clip(item, 60, lesson)
             if len(item.split()) >= 3 and clipped:
                 run.append(clipped)
                 expected += 1
@@ -681,7 +691,7 @@ def _ordered_steps(lesson, limit: int = 5):
             run = []
             expected = 1
             item = match.group(2).strip()
-            clipped = _verbatim_clip(item, 90, lesson)
+            clipped = _verbatim_clip(item, 60, lesson)
             if len(item.split()) >= 3 and clipped:
                 run.append(clipped)
                 expected = 2
@@ -716,11 +726,20 @@ def _category_groups(lesson, limit: int = 4):
     text = re.sub(r'\s+', ' ', lesson.raw_text)
     membership = re.compile(
         r'\b([A-Z][A-Za-z0-9()&/ -]{1,40}?)\s+(?:is|are)\s+(?:a |an )([a-z][a-z -]{2,35})[.!?]')
-    groups = {}
+    candidates = []
     for match in membership.finditer(text):
-        term = _clean_term(match.group(1))
-        category = match.group(2).strip()
-        span = match.group(0).strip()
+        candidates.append((match.group(1), match.group(2), match.group(0)))
+    # Two-sentence form common in the physics book: "Speed: is the distance
+    # moved ... . It is a scalar quantity." The pronoun refers to the term.
+    pronoun = re.compile(
+        r'\b([A-Z][A-Za-z0-9()&/ -]{1,40}?)\s*:\s*is\s+[^.!?]{10,160}?[.!?]\s*It is (?:a |an )([a-z][a-z -]{2,35})[.!?]')
+    for match in pronoun.finditer(text):
+        candidates.append((match.group(1), match.group(2), match.group(0)))
+    groups = {}
+    for raw_term, raw_category, span in candidates:
+        term = _clean_term(raw_term)
+        category = raw_category.strip()
+        span = span.strip()
         if not term or not (1 <= len(category.split()) <= 3):
             continue
         if not _verify_excerpt(span, lesson.raw_text):
@@ -791,7 +810,7 @@ def _scrambled(items):
 def _mechanic_fields(mechanic, data, lesson):
     """Activity texts for one mechanic; every listed item is a verified excerpt."""
     if mechanic == 'match':
-        pairs = list(data)
+        pairs = list(data)[:3]
 
         def procedures(chosen):
             terms = '، '.join(t for t, _, _ in chosen)
@@ -799,7 +818,7 @@ def _mechanic_fields(mechanic, data, lesson):
             return ("يطابق {actor} كل مصطلح بالتعريف المناسب له من الدرس. "
                     f"العمود أ: {terms}. العمود ب (بترتيب مختلف): {defs}.")
 
-        while len(pairs) > 3 and len(procedures(pairs)) > 340:
+        while len(pairs) > 3 and len(procedures(pairs)) > 300:
             pairs.pop()
         return {
             'purpose': f"نشاط مقترح (توصيل): مطابقة {len(pairs)} مصطلحات بتعريفاتها كما وردت في الدرس.",
@@ -936,15 +955,15 @@ def _grounded_practice(payload: LessonPlanPayload, lesson: LessonBoundary) -> Le
     pairs = _definition_pairs(lesson)
     if len(pairs) >= 3:
         mechanics.append(('match', pairs))
+    scenario = _scenario_span(lesson, [card[0] for card in cards] + [p[0] for p in pairs])
+    if scenario:
+        mechanics.append(('scenario', scenario))
     steps = _ordered_steps(lesson)
     if len(steps) >= 3:
         mechanics.append(('sequence', steps))
     classified = _category_groups(lesson)
     if classified:
         mechanics.append(('classify', classified))
-    scenario = _scenario_span(lesson, [card[0] for card in cards] + [p[0] for p in pairs])
-    if scenario:
-        mechanics.append(('scenario', scenario))
     assignment = {}
     if mechanics:
         assignment[2] = mechanics[0]
