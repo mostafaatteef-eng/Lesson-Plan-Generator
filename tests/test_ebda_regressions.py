@@ -531,3 +531,25 @@ def test_mechanics_never_fabricate_and_cards_remain_the_fallback():
     assert '(توصيل)' in p.activity_2.purpose
     assert 'بطاقة مقترحة' in p.activity_1.purpose
     assert any('التوصيل' in note for note in p.missing_curriculum_notes)
+
+
+def test_page_fit_retry_uses_card_only_layout():
+    from types import SimpleNamespace
+    from app.engines.rules_engine import _grounded_outcomes, _grounded_practice
+    source = ('Measurement is the process of comparing a quantity with its unit.\n'
+              'The fundamental unit of length is defined to be one meter.\n'
+              'The fundamental unit of mass is defined as one kilogram.\n')
+    lesson = SimpleNamespace(raw_text=source, start_page=1, end_page=1, key_concepts=[], title='Lesson')
+    def make_payload():
+        outcomes, evidence = _grounded_outcomes(lesson)
+        return SimpleNamespace(learning_outcomes=outcomes, traceability=list(evidence),
+            activity_1=SimpleNamespace(), activity_2=SimpleNamespace(),
+            lesson_elements=[SimpleNamespace() for _ in range(5)], missing_curriculum_notes=[])
+    rich = _grounded_practice(make_payload(), lesson)
+    assert '(توصيل)' in rich.activity_2.purpose
+    compact = _grounded_practice(make_payload(), lesson, allow_mechanics=False)
+    # The page-fit fallback keeps both elements on the baseline question cards.
+    assert 'بطاقة مقترحة' in compact.activity_1.purpose
+    assert 'بطاقة مقترحة' in compact.activity_2.purpose
+    assert not any('التوصيل' in note for note in compact.missing_curriculum_notes)
+    assert any('تكييف مقترح' in note for note in compact.missing_curriculum_notes)
