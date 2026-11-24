@@ -457,8 +457,8 @@ def test_match_and_sequence_mechanics_use_only_verified_items():
     assert all(e.verified_in_source for e in p.traceability)
     assert all(' '.join(e.supporting_excerpt.split()) in norm for e in p.traceability)
     # Items stay inside the printable budget.
-    assert len(p.activity_1.student_procedures) <= 400
-    assert len(p.activity_2.student_procedures) <= 400
+    assert len(p.activity_1.student_procedures) <= 320
+    assert len(p.activity_2.student_procedures) <= 320
 
 
 def test_classify_and_scenario_mechanics_are_source_gated():
